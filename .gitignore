@@ -1,0 +1,16 @@
+# Binaries
+/bin/
+*.exe
+*.exe~
+*.out
+
+# Test / coverage artifacts
+*.test
+coverage.out
+coverage.html
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

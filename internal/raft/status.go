@@ -1,0 +1,42 @@
+package raft
+
+// Status is an immutable snapshot of a node's observable state, used by tests and
+// tooling.
+type Status struct {
+	ID          string
+	Role        Role
+	Term        uint64
+	LeaderID    string
+	CommitIndex uint64
+	LastApplied uint64
+	LogLength   int
+}
+
+// Status returns a consistent snapshot of the node's current state.
+func (n *Node) Status() Status {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return Status{
+		ID:          n.id,
+		Role:        n.role,
+		Term:        n.currentTerm,
+		LeaderID:    n.leaderID,
+		CommitIndex: n.commitIndex,
+		LastApplied: n.lastApplied,
+		LogLength:   len(n.log) - 1, // exclude sentinel
+	}
+}
+
+// IsLeader reports whether the node currently believes it is the leader.
+func (n *Node) IsLeader() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.role == Leader
+}
+
+// Term returns the node's current term.
+func (n *Node) Term() uint64 {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.currentTerm
+}
