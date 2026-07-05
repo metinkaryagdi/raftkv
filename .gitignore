@@ -9,6 +9,9 @@
 coverage.out
 coverage.html
 
+# Local cluster run artifacts
+/clusterlogs/
+
 # Editor / OS
 .idea/
 .vscode/

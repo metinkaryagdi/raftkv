@@ -96,9 +96,21 @@ func (n *Node) startElection() {
 func (n *Node) becomeLeaderLocked() {
 	n.role = Leader
 	n.leaderID = n.id
+
+	// Append a no-op entry for the new term. A leader may not commit entries
+	// carried over from earlier terms just by counting replicas (§5.4.2); it must
+	// first commit an entry from its own term. Committing this no-op does that and
+	// transitively commits (and thus makes applicable) everything before it — the
+	// standard technique from §8 of the paper. The state machine ignores no-ops.
 	lastIdx, _ := n.lastLogInfoLocked()
+	n.log = append(n.log, LogEntry{
+		Term:    n.currentTerm,
+		Index:   lastIdx + 1,
+		Command: Command{Op: "noop"},
+	})
+	newLast, _ := n.lastLogInfoLocked()
 	for _, p := range n.peers {
-		n.nextIndex[p] = lastIdx + 1
+		n.nextIndex[p] = newLast + 1
 		n.matchIndex[p] = 0
 	}
 	// Force the next tick to broadcast immediately.
