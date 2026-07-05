@@ -1,0 +1,35 @@
+Building raftkv...
+
+=== Starting 5-node cluster ===
+  started n1 (pid 40520)  http=127.0.0.1:8001
+  started n2 (pid 34360)  http=127.0.0.1:8002
+  started n3 (pid 27380)  http=127.0.0.1:8003
+  started n4 (pid 39968)  http=127.0.0.1:8004
+  started n5 (pid 42204)  http=127.0.0.1:8005
+
+=== Waiting for leader election ===
+  leader = n5  (term 5)
+
+=== Writing city=istanbul via leader n5 ===
+  read back: city = istanbul
+
+=== KILLING leader n5 (pid 42204) ===
+  leader process terminated
+
+=== Waiting for the cluster to elect a NEW leader ===
+  new leader = n1  (term 6)
+
+=== Cluster still serving: pre-crash write survived, and a new write commits ===
+  city (written before crash) = istanbul
+  lang (written after crash)  = go
+
+=== Final status of all live nodes ===
+  n1: role=Leader    term=6 leader=n1 commit=4
+  n2: role=Follower  term=6 leader=n1 commit=3
+  n3: role=Follower  term=6 leader=n1 commit=3
+  n4: role=Follower  term=6 leader=n1 commit=3
+  n5: (down)
+
+Demo complete: the cluster survived a leader crash with no data loss.
+
+Stopping cluster...

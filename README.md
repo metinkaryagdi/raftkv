@@ -195,31 +195,32 @@ naming the current leader.
 `scripts/demo-failover.ps1` starts a real 5-process cluster, writes a value, then
 **kills the leader process** and shows the cluster elect a new leader and keep
 serving — with the pre-crash write still intact. Captured run
-([`docs/demo-failover.log`](docs/demo-failover.log)):
+([`docs/demo-failover.log`](docs/demo-failover.log); exact node ids and term
+numbers vary per run):
 
 ```
 === Waiting for leader election ===
-  leader = n3  (term 1)
+  leader = n5  (term 5)
 
-=== Writing city=istanbul via leader n3 ===
+=== Writing city=istanbul via leader n5 ===
   read back: city = istanbul
 
-=== KILLING leader n3 (pid 36888) ===
+=== KILLING leader n5 (pid 42204) ===
   leader process terminated
 
 === Waiting for the cluster to elect a NEW leader ===
-  new leader = n1  (term 2)
+  new leader = n1  (term 6)
 
 === Cluster still serving: pre-crash write survived, and a new write commits ===
   city (written before crash) = istanbul
   lang (written after crash)  = go
 
 === Final status of all live nodes ===
-  n1: role=Leader    term=2 leader=n1 commit=4
-  n2: role=Follower  term=2 leader=n1 commit=3
-  n3: (down)
-  n4: role=Follower  term=2 leader=n1 commit=4
-  n5: role=Follower  term=2 leader=n1 commit=4
+  n1: role=Leader    term=6 leader=n1 commit=4
+  n2: role=Follower  term=6 leader=n1 commit=3
+  n3: role=Follower  term=6 leader=n1 commit=3
+  n4: role=Follower  term=6 leader=n1 commit=3
+  n5: (down)
 ```
 
 Split-brain prevention (only the majority commits; the minority's write fails;
