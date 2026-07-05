@@ -48,6 +48,93 @@ func newSvcCluster(t *testing.T, n int) *svcCluster {
 	return c
 }
 
+func (c *svcCluster) setCommitTimeout(d time.Duration) {
+	for _, id := range c.ids {
+		c.servers[id].SetCommitTimeout(d)
+	}
+}
+
+// aliveIDs returns all node ids except the excluded ones.
+func (c *svcCluster) aliveIDs(exclude ...string) []string {
+	skip := map[string]bool{}
+	for _, id := range exclude {
+		skip[id] = true
+	}
+	var out []string
+	for _, id := range c.ids {
+		if !skip[id] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// leaderAmong waits for a single leader within the given id set.
+func (c *svcCluster) leaderAmong(within time.Duration, ids []string) *server.Server {
+	c.t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		var leader *server.Server
+		count := 0
+		for _, id := range ids {
+			if c.servers[id].Node().IsLeader() {
+				leader = c.servers[id]
+				count++
+			}
+		}
+		if count == 1 {
+			return leader
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	c.t.Fatalf("no leader among %v in time", ids)
+	return nil
+}
+
+// setToLeader writes k=v via whichever node in ids is currently leader, retrying
+// across leadership changes until committed or the deadline passes.
+func (c *svcCluster) setToLeader(within time.Duration, ids []string, k, v string) {
+	c.t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		for _, id := range ids {
+			err := c.servers[id].Set(k, v)
+			if err == nil {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	c.t.Fatalf("could not set %s=%s via any leader in %v within %v", k, v, ids, within)
+}
+
+// waitConvergedAmong is waitConverged restricted to a subset of nodes.
+func (c *svcCluster) waitConvergedAmong(within time.Duration, ids []string, want map[string]string) {
+	c.t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		ok := true
+		for _, id := range ids {
+			snap := c.servers[id].Store().Snapshot()
+			if len(snap) != len(want) {
+				ok = false
+				break
+			}
+			for k, v := range want {
+				if snap[k] != v {
+					ok = false
+					break
+				}
+			}
+		}
+		if ok {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	c.t.Fatalf("nodes %v did not converge to %v in time", ids, want)
+}
+
 func (c *svcCluster) startAll() {
 	for _, id := range c.ids {
 		c.servers[id].Start()

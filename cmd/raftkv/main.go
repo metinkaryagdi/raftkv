@@ -54,9 +54,13 @@ func main() {
 		ID:                 *id,
 		Peers:              raftPeers,
 		Transport:          transport,
-		ElectionTimeoutMin: 150 * time.Millisecond,
-		ElectionTimeoutMax: 300 * time.Millisecond,
-		HeartbeatInterval:  50 * time.Millisecond,
+		// Timeouts are generous relative to the in-memory tests: real gRPC
+		// connections are dialed lazily on first use, so the election timeout must
+		// leave room for a cold connection to establish before a node gives up and
+		// starts a competing election (otherwise terms inflate at startup).
+		ElectionTimeoutMin: 600 * time.Millisecond,
+		ElectionTimeoutMax: 1200 * time.Millisecond,
+		HeartbeatInterval:  120 * time.Millisecond,
 		Logger:             stderrLogger{},
 	})
 
@@ -70,6 +74,7 @@ func main() {
 		}
 	}()
 
+	transport.Warmup() // start dialing peers before the first election
 	kv := server.New(node)
 	kv.Start()
 	node.Start()

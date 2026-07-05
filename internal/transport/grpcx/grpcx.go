@@ -126,6 +126,21 @@ func (t *Transport) client(target string) (raftpb.RaftClient, error) {
 	return raftpb.NewRaftClient(conn), nil
 }
 
+// Warmup eagerly creates and starts dialing every peer connection so that the
+// first real RPC (a vote request at startup) does not also pay connection-setup
+// latency. Connections are non-blocking and retry in the background, so it is
+// safe to call before peers are listening.
+func (t *Transport) Warmup() {
+	for id := range t.peers {
+		_, _ = t.client(id) // populates t.conns
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, c := range t.conns {
+		c.Connect()
+	}
+}
+
 // Close tears down all peer connections.
 func (t *Transport) Close() {
 	t.mu.Lock()

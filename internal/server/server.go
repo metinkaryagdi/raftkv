@@ -51,6 +51,10 @@ func New(node *raft.Node) *Server {
 	}
 }
 
+// SetCommitTimeout overrides how long a write waits for commit before returning
+// ErrTimeout. Useful for tests and for tuning client-facing latency.
+func (s *Server) SetCommitTimeout(d time.Duration) { s.commitTimeout = d }
+
 // Node exposes the underlying raft node (status, lifecycle).
 func (s *Server) Node() *raft.Node { return s.node }
 

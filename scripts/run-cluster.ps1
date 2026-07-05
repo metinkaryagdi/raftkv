@@ -9,10 +9,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $exe = Join-Path $BinDir "raftkv.exe"
-if (-not (Test-Path $exe)) {
-    Write-Host "Building raftkv..." -ForegroundColor Cyan
-    & go build -o $exe "$PSScriptRoot\..\cmd\raftkv"
-}
+Write-Host "Building raftkv..." -ForegroundColor Cyan
+& go build -o $exe "$PSScriptRoot\..\cmd\raftkv"
 
 # Build the shared peers list (id=host:port for every node).
 $peerParts = @()

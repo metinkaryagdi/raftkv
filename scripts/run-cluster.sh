@@ -9,10 +9,8 @@ NODES="${1:-5}"
 mkdir -p clusterlogs
 : > clusterlogs/pids
 
-if [ ! -x bin/raftkv.exe ] && [ ! -x bin/raftkv ]; then
-  echo "Building raftkv..."
-  go build -o bin/raftkv ./cmd/raftkv
-fi
+echo "Building raftkv..."
+go build -o bin/raftkv ./cmd/raftkv
 BIN="bin/raftkv"; [ -x bin/raftkv.exe ] && BIN="bin/raftkv.exe"
 
 peers=""
