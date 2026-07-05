@@ -70,7 +70,7 @@ type Node struct {
 	rng *rand.Rand
 
 	// --- Lifecycle. ---
-	stopCh chan struct{}
+	stopCh  chan struct{}
 	stopped bool
 	wg      sync.WaitGroup
 
@@ -112,10 +112,10 @@ func NewNode(cfg Config) *Node {
 		role:               Follower,
 		// A single sentinel entry at index 0 removes the special-casing of an
 		// empty log: the "previous" entry always exists.
-		log:        []LogEntry{{Term: 0, Index: 0}},
-		nextIndex:  make(map[string]uint64),
-		matchIndex: make(map[string]uint64),
-		rng:        rand.New(rand.NewSource(time.Now().UnixNano() ^ hashID(cfg.ID))),
+		log:         []LogEntry{{Term: 0, Index: 0}},
+		nextIndex:   make(map[string]uint64),
+		matchIndex:  make(map[string]uint64),
+		rng:         rand.New(rand.NewSource(time.Now().UnixNano() ^ hashID(cfg.ID))),
 		stopCh:      make(chan struct{}),
 		applyCh:     make(chan ApplyMsg, 256),
 		applySignal: make(chan struct{}, 1),

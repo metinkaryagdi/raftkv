@@ -51,9 +51,9 @@ func main() {
 
 	transport := grpcx.NewTransport(*id, peers)
 	node := raft.NewNode(raft.Config{
-		ID:                 *id,
-		Peers:              raftPeers,
-		Transport:          transport,
+		ID:        *id,
+		Peers:     raftPeers,
+		Transport: transport,
 		// Timeouts are generous relative to the in-memory tests: real gRPC
 		// connections are dialed lazily on first use, so the election timeout must
 		// leave room for a cold connection to establish before a node gives up and

@@ -8,13 +8,13 @@ package raft
 
 // Role is the current role of a node in the Raft state machine.
 //
-//	                times out,          receives votes from
-//	                starts election     majority of servers
-//	 ┌──────────┐  ───────────────►  ┌───────────┐  ─────────────►  ┌────────┐
-//	 │ Follower │                    │ Candidate │                  │ Leader │
-//	 └──────────┘  ◄───────────────  └───────────┘                  └────────┘
-//	                discovers current    discovers server
-//	                leader or new term   with higher term
+//	               times out,          receives votes from
+//	               starts election     majority of servers
+//	┌──────────┐  ───────────────►  ┌───────────┐  ─────────────►  ┌────────┐
+//	│ Follower │                    │ Candidate │                  │ Leader │
+//	└──────────┘  ◄───────────────  └───────────┘                  └────────┘
+//	               discovers current    discovers server
+//	               leader or new term   with higher term
 type Role int
 
 const (
