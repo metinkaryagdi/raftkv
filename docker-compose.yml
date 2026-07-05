@@ -1,0 +1,47 @@
+# A 5-node raftkv cluster, each node its own container on a shared Docker network.
+# Nodes find each other by service name (n1..n5) over gRPC on port 9001; every
+# node also serves the client HTTP API on 9001's sibling 8001, published to a
+# distinct host port per node (8001..8005).
+#
+#   docker compose up --build
+#   curl http://127.0.0.1:8001/status
+#   curl -X PUT http://127.0.0.1:8001/kv/city -d istanbul   # redirects to leader
+#
+# Kill a leader to watch failover:  docker compose kill n<leader>
+
+x-node: &node
+  build: .
+  image: raftkv:latest
+  environment:
+    # Shared by every node: the full peer list and the in-container bind addresses.
+    RAFTKV_PEERS: "n1=n1:9001,n2=n2:9001,n3=n3:9001,n4=n4:9001,n5=n5:9001"
+    RAFTKV_RAFT_ADDR: "0.0.0.0:9001"
+    RAFTKV_HTTP_ADDR: "0.0.0.0:8001"
+  restart: unless-stopped
+  networks: [raft]
+
+services:
+  n1:
+    <<: *node
+    command: ["--id", "n1"]
+    ports: ["8001:8001"]
+  n2:
+    <<: *node
+    command: ["--id", "n2"]
+    ports: ["8002:8001"]
+  n3:
+    <<: *node
+    command: ["--id", "n3"]
+    ports: ["8003:8001"]
+  n4:
+    <<: *node
+    command: ["--id", "n4"]
+    ports: ["8004:8001"]
+  n5:
+    <<: *node
+    command: ["--id", "n5"]
+    ports: ["8005:8001"]
+
+networks:
+  raft:
+    driver: bridge

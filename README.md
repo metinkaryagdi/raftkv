@@ -188,6 +188,28 @@ curl http://127.0.0.1:8001/kv/city                      # -> {"key":"city","valu
 A non-leader answers writes/reads with `421 Misdirected Request` and a JSON body
 naming the current leader.
 
+### Or run it in Docker
+
+Each node runs as its own container on a shared Docker network, finding its peers
+by service name over gRPC — closer to a real deployment than five processes on one
+host. The HTTP API of each node is published to a distinct host port (8001–8005).
+
+```bash
+docker compose up --build          # start the 5-node cluster
+curl http://127.0.0.1:8001/status
+curl -X PUT http://127.0.0.1:8001/kv/city -d istanbul
+
+docker compose kill n1             # kill the leader's container and watch failover
+curl http://127.0.0.1:8002/kv/city # the write survives on the new leader
+
+docker compose down                # tear everything down
+```
+
+> **Note:** BuildKit can fail to build if the project lives in a path with
+> non-ASCII characters. If `docker compose up --build` errors on a session
+> shared-key, build once with the legacy builder and then start without building:
+> `DOCKER_BUILDKIT=0 docker build -t raftkv:latest . && docker compose up -d`.
+
 ---
 
 ## Failure demo: surviving a leader crash
