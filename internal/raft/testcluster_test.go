@@ -2,6 +2,8 @@ package raft_test
 
 import (
 	"fmt"
+	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,12 +19,23 @@ type testCluster struct {
 	net   *inmem.Network
 	nodes map[string]*raft.Node
 	ids   []string
+
+	done chan struct{} // closed on stopAll to release apply-collector goroutines
+
+	mu      sync.Mutex
+	applied map[string][]raft.ApplyMsg // per-node committed commands, in order
 }
 
 func newTestCluster(t *testing.T, n int) *testCluster {
 	t.Helper()
 	net := inmem.NewNetwork()
-	c := &testCluster{t: t, net: net, nodes: make(map[string]*raft.Node)}
+	c := &testCluster{
+		t:       t,
+		net:     net,
+		nodes:   make(map[string]*raft.Node),
+		done:    make(chan struct{}),
+		applied: make(map[string][]raft.ApplyMsg),
+	}
 	for i := 0; i < n; i++ {
 		c.ids = append(c.ids, fmt.Sprintf("n%d", i+1))
 	}
@@ -50,10 +63,36 @@ func newTestCluster(t *testing.T, n int) *testCluster {
 func (c *testCluster) startAll() {
 	for _, id := range c.ids {
 		c.nodes[id].Start()
+		c.collect(id)
 	}
 }
 
+// collect drains a node's ApplyCh into c.applied so tests can assert that every
+// node applies the same command sequence (state-machine equivalence).
+func (c *testCluster) collect(id string) {
+	ch := c.nodes[id].ApplyCh()
+	go func() {
+		for {
+			select {
+			case <-c.done:
+				return
+			case msg := <-ch:
+				c.mu.Lock()
+				c.applied[id] = append(c.applied[id], msg)
+				c.mu.Unlock()
+			}
+		}
+	}()
+}
+
+func (c *testCluster) appliedOf(id string) []raft.ApplyMsg {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]raft.ApplyMsg(nil), c.applied[id]...)
+}
+
 func (c *testCluster) stopAll() {
+	close(c.done)
 	for _, id := range c.ids {
 		c.nodes[id].Stop()
 	}
@@ -125,6 +164,58 @@ func (c *testCluster) checkOneLeader(ids []string) (string, uint64, bool) {
 		return "", 0, false
 	}
 	return leader, maxTerm, true
+}
+
+// submitToLeader submits cmd to whichever node in the given set is currently
+// leader, retrying across leadership changes until accepted or the deadline
+// passes. Restricting the candidate set matters under partitions: a stale leader
+// stranded in a minority still reports itself as leader and would accept (but
+// never commit) the command, so tests must target the reachable majority.
+func (c *testCluster) submitToLeader(within time.Duration, ids []string, cmd raft.Command) uint64 {
+	c.t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		for _, id := range ids {
+			if idx, _, ok := c.nodes[id].Submit(cmd); ok {
+				return idx
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	c.t.Fatalf("could not submit %v to any leader in %v within %v", cmd, ids, within)
+	return 0
+}
+
+// waitLogsConverged blocks until every node in ids has committed at least
+// wantCommit entries and all their logs are byte-for-byte identical.
+func (c *testCluster) waitLogsConverged(within time.Duration, ids []string, wantCommit uint64) {
+	c.t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		if c.logsConverged(ids, wantCommit) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	c.t.Fatalf("logs did not converge (want commit>=%d) within %v: %s", wantCommit, within, c.dump(ids))
+}
+
+func (c *testCluster) logsConverged(ids []string, wantCommit uint64) bool {
+	var refLog []raft.LogEntry
+	for i, id := range ids {
+		if c.nodes[id].CommitIndex() < wantCommit {
+			return false
+		}
+		lg := c.nodes[id].LogCopy()
+		if i == 0 {
+			refLog = lg
+			continue
+		}
+		if !reflect.DeepEqual(refLog, lg) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *testCluster) dump(ids []string) string {

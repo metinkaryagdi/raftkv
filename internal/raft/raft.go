@@ -74,8 +74,10 @@ type Node struct {
 	stopped bool
 	wg      sync.WaitGroup
 
-	// applyCh receives commands as they are committed (wired up in Phase 3).
-	applyCh chan ApplyMsg
+	// applyCh receives commands as they are committed; consumed by the state
+	// machine. applySignal wakes the applier goroutine when commitIndex advances.
+	applyCh     chan ApplyMsg
+	applySignal chan struct{}
 }
 
 // ApplyMsg is delivered on the apply channel for each newly committed entry.
@@ -114,8 +116,9 @@ func NewNode(cfg Config) *Node {
 		nextIndex:  make(map[string]uint64),
 		matchIndex: make(map[string]uint64),
 		rng:        rand.New(rand.NewSource(time.Now().UnixNano() ^ hashID(cfg.ID))),
-		stopCh:     make(chan struct{}),
-		applyCh:    make(chan ApplyMsg, 256),
+		stopCh:      make(chan struct{}),
+		applyCh:     make(chan ApplyMsg, 256),
+		applySignal: make(chan struct{}, 1),
 	}
 	n.resetElectionTimerLocked()
 	return n
@@ -130,8 +133,9 @@ func (n *Node) ID() string { return n.id }
 
 // Start launches the node's internal loop.
 func (n *Node) Start() {
-	n.wg.Add(1)
+	n.wg.Add(2)
 	go n.run()
+	go n.applier()
 	n.logger.Event(n.id, Event{Kind: "start", Term: 0, Role: Follower})
 }
 

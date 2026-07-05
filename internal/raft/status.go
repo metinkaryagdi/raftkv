@@ -40,3 +40,20 @@ func (n *Node) Term() uint64 {
 	defer n.mu.Unlock()
 	return n.currentTerm
 }
+
+// CommitIndex returns the node's current commit index.
+func (n *Node) CommitIndex() uint64 {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.commitIndex
+}
+
+// LogCopy returns a copy of the node's log excluding the index-0 sentinel. It is
+// used by tests to assert that logs converge across the cluster.
+func (n *Node) LogCopy() []LogEntry {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]LogEntry, len(n.log)-1)
+	copy(out, n.log[1:])
+	return out
+}

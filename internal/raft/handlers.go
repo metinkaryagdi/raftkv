@@ -37,9 +37,9 @@ func (n *Node) HandleRequestVote(args *RequestVoteArgs) *RequestVoteReply {
 	return reply
 }
 
-// HandleAppendEntries processes an incoming AppendEntries RPC. In Phase 1 this
-// covers term arbitration and the leader-recognition/heartbeat path; the log
-// consistency check and entry appending are added in Phase 2.
+// HandleAppendEntries processes an incoming AppendEntries RPC (§5.3): it performs
+// term arbitration, the log-consistency check at PrevLogIndex/PrevLogTerm, appends
+// or reconciles entries, and advances the follower's commit index.
 func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -63,8 +63,63 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 
 	n.leaderID = args.LeaderID
 	n.resetElectionTimerLocked()
-
 	reply.Term = n.currentTerm
+
+	lastIdx, _ := n.lastLogInfoLocked()
+
+	// Consistency check 1: we must actually have an entry at PrevLogIndex.
+	if args.PrevLogIndex > lastIdx {
+		reply.Success = false
+		reply.ConflictIndex = lastIdx + 1 // tell the leader where our log ends
+		reply.ConflictTerm = 0
+		return reply
+	}
+
+	// Consistency check 2: the terms at PrevLogIndex must match. If not, report
+	// the first index of our conflicting term so the leader can back up a whole
+	// term at once.
+	if got := n.termAtLocked(args.PrevLogIndex); got != args.PrevLogTerm {
+		reply.Success = false
+		reply.ConflictTerm = got
+		ci := args.PrevLogIndex
+		for ci > 1 && n.termAtLocked(ci-1) == got {
+			ci--
+		}
+		reply.ConflictIndex = ci
+		return reply
+	}
+
+	// Append any new entries, reconciling conflicts. An existing entry that
+	// disagrees on term (and everything after it) is truncated (§5.3). Entries we
+	// already have with a matching term are left untouched so that a delayed or
+	// duplicated RPC can never delete committed entries.
+	for i := range args.Entries {
+		entry := args.Entries[i]
+		idx := args.PrevLogIndex + 1 + uint64(i)
+		if idx < uint64(len(n.log)) {
+			if n.log[idx].Term != entry.Term {
+				n.log = n.log[:idx]
+				n.log = append(n.log, entry)
+			}
+		} else {
+			n.log = append(n.log, entry)
+		}
+	}
+
+	// Advance commit index. We cannot commit past what we actually hold.
+	if args.LeaderCommit > n.commitIndex {
+		newLast, _ := n.lastLogInfoLocked()
+		n.commitIndex = min64(args.LeaderCommit, newLast)
+		n.signalApplyLocked()
+	}
+
 	reply.Success = true
 	return reply
+}
+
+func min64(a, b uint64) uint64 {
+	if a < b {
+		return a
+	}
+	return b
 }
