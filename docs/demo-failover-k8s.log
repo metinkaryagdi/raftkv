@@ -1,0 +1,34 @@
+
+=== Waiting for a leader among the 5 pods ===
+  (port-forward to raftkv-0 never became ready, skipping)
+  leader = raftkv-2
+
+=== Writing city=istanbul via raftkv-2 ===
+{"key":"city","status":"ok"}
+
+{"key":"city","value":"istanbul"}
+
+
+=== DELETING leader pod raftkv-2 (StatefulSet will recreate it) ===
+
+=== Waiting for the cluster to elect a NEW leader ===
+  (port-forward to raftkv-0 never became ready, skipping)
+  new leader = raftkv-4
+
+=== Pre-crash write survived, and a new write commits ===
+{"key":"city","value":"istanbul"}
+
+{"key":"lang","status":"ok"}
+
+{"key":"lang","value":"go"}
+
+
+=== Pods after failover ===
+NAME       READY   STATUS    RESTARTS   AGE
+raftkv-0   1/1     Running   0          91s
+raftkv-1   1/1     Running   0          91s
+raftkv-2   1/1     Running   0          45s
+raftkv-3   1/1     Running   0          91s
+raftkv-4   1/1     Running   0          91s
+
+Demo complete: the StatefulSet recreated the killed pod and the cluster kept serving.

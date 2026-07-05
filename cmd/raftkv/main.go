@@ -6,9 +6,11 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +36,14 @@ func main() {
 	*peersStr = orEnv(*peersStr, "RAFTKV_PEERS")
 	if *httpAddr == "" {
 		*httpAddr = "127.0.0.1:8001"
+	}
+	// Kubernetes StatefulSet mode: when no explicit peer list is given but a
+	// replica count is, derive the peer list from stable pod DNS names so every
+	// pod can share one identical spec (its id comes from the pod hostname).
+	if *peersStr == "" {
+		if generated := k8sPeersFromEnv(*id); generated != "" {
+			*peersStr = generated
+		}
 	}
 
 	if *id == "" || *peersStr == "" {
@@ -101,6 +111,46 @@ func orEnv(val, envKey string) string {
 		return val
 	}
 	return os.Getenv(envKey)
+}
+
+// k8sPeersFromEnv builds the peer list for a StatefulSet deployment from the
+// replica count and the headless service name, using the stable pod DNS that a
+// StatefulSet guarantees: pod <name>-<ordinal> is reachable at
+// <name>-<ordinal>.<service>:<port>. It returns "" if RAFTKV_REPLICAS is unset.
+//
+// Env:
+//
+//	RAFTKV_REPLICAS   number of pods (e.g. "5")
+//	RAFTKV_SERVICE    headless service name (default: pod basename)
+//	RAFTKV_PEER_PORT  gRPC port (default: "9001")
+func k8sPeersFromEnv(id string) string {
+	replicasStr := os.Getenv("RAFTKV_REPLICAS")
+	if replicasStr == "" {
+		return ""
+	}
+	replicas, err := strconv.Atoi(replicasStr)
+	if err != nil || replicas < 1 {
+		log.Fatalf("invalid RAFTKV_REPLICAS %q", replicasStr)
+	}
+	// Pod names are "<basename>-<ordinal>"; strip the ordinal to get the basename.
+	basename := id
+	if i := strings.LastIndex(id, "-"); i > 0 {
+		basename = id[:i]
+	}
+	service := os.Getenv("RAFTKV_SERVICE")
+	if service == "" {
+		service = basename
+	}
+	port := os.Getenv("RAFTKV_PEER_PORT")
+	if port == "" {
+		port = "9001"
+	}
+	parts := make([]string, 0, replicas)
+	for i := 0; i < replicas; i++ {
+		pod := fmt.Sprintf("%s-%d", basename, i)
+		parts = append(parts, fmt.Sprintf("%s=%s.%s:%s", pod, pod, service, port))
+	}
+	return strings.Join(parts, ",")
 }
 
 func parsePeers(s string) (map[string]string, error) {

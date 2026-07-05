@@ -210,6 +210,58 @@ docker compose down                # tear everything down
 > shared-key, build once with the legacy builder and then start without building:
 > `DOCKER_BUILDKIT=0 docker build -t raftkv:latest . && docker compose up -d`.
 
+### Or run it on Kubernetes
+
+[`deploy/k8s/raftkv.yaml`](deploy/k8s/raftkv.yaml) runs the cluster as a
+**StatefulSet** behind a headless Service — the same pattern etcd itself uses in
+production, because Raft peer addressing needs the stable per-pod identity and
+DNS a Deployment doesn't give you. Every pod shares one identical spec: it learns
+its own id from its pod name (via the downward API) and derives its peers' stable
+DNS names (`raftkv-0.raftkv-headless`, `raftkv-1.raftkv-headless`, ...) from a
+replica count, with no per-pod configuration
+(see `k8sPeersFromEnv` in [`cmd/raftkv/main.go`](cmd/raftkv/main.go)).
+
+```bash
+# Local cluster via kind (https://kind.sigs.k8s.io/)
+kind create cluster --name raftkv
+scripts/k8s-deploy.sh raftkv        # builds the image, loads it into kind, applies the manifests
+
+kubectl get pods -l app=raftkv -w
+kubectl port-forward pod/raftkv-0 8001:8001 &
+curl http://127.0.0.1:8001/status
+
+# Kill the leader pod and watch the StatefulSet recreate it while the cluster
+# elects a new leader and keeps serving:
+scripts/demo-failover-k8s.sh
+```
+
+Captured run ([`docs/demo-failover-k8s.log`](docs/demo-failover-k8s.log)):
+
+```
+=== Waiting for a leader among the 5 pods ===
+  leader = raftkv-2
+
+=== Writing city=istanbul via raftkv-2 ===
+{"key":"city","value":"istanbul"}
+
+=== DELETING leader pod raftkv-2 (StatefulSet will recreate it) ===
+
+=== Waiting for the cluster to elect a NEW leader ===
+  new leader = raftkv-4
+
+=== Pre-crash write survived, and a new write commits ===
+{"key":"city","value":"istanbul"}
+{"key":"lang","value":"go"}
+
+=== Pods after failover ===
+NAME       READY   STATUS    RESTARTS   AGE
+raftkv-0   1/1     Running   0          91s
+raftkv-1   1/1     Running   0          91s
+raftkv-2   1/1     Running   0          45s   <- recreated by the StatefulSet
+raftkv-3   1/1     Running   0          91s
+raftkv-4   1/1     Running   0          91s
+```
+
 ---
 
 ## Failure demo: surviving a leader crash
@@ -279,7 +331,8 @@ internal/
     inmem/           in-process transport w/ crash & partition injection
     grpcx/           gRPC transport (+ generated raftpb)
 cmd/raftkv/      one cluster node (gRPC peers + HTTP API)
-scripts/         run-cluster.{ps1,sh}, demo-failover.ps1
+deploy/k8s/      StatefulSet + headless Service manifest
+scripts/         run-cluster.{ps1,sh}, demo-failover.ps1, k8s-deploy.sh, demo-failover-k8s.sh
 ```
 
 ---

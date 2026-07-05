@@ -1,0 +1,87 @@
+# Kubernetes deployment of the raftkv cluster as a StatefulSet: stable per-pod
+# identity and DNS are exactly what Raft peer addressing needs (each pod's id
+# and its peers' addresses must survive restarts/rescheduling). This mirrors how
+# etcd is commonly run on Kubernetes.
+#
+#   kubectl apply -f deploy/k8s/raftkv.yaml
+#   kubectl get pods -l app=raftkv -w
+#   kubectl port-forward pod/raftkv-0 8001:8001   # then curl 127.0.0.1:8001/status
+#
+# Peer discovery: each pod's RAFTKV_ID is injected from its own pod name via the
+# downward API (raftkv-0, raftkv-1, ...). The binary then derives the full peer
+# list itself from RAFTKV_REPLICAS + RAFTKV_SERVICE using the StatefulSet's
+# guaranteed stable DNS: <pod>.<service>:<port> (see k8sPeersFromEnv in
+# cmd/raftkv/main.go) — no per-pod config needed, all 5 pods share one spec.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: raftkv-headless
+  labels:
+    app: raftkv
+spec:
+  clusterIP: None # headless: DNS resolves directly to each pod's IP
+  selector:
+    app: raftkv
+  ports:
+    - name: raft-grpc
+      port: 9001
+      targetPort: 9001
+    - name: client-http
+      port: 8001
+      targetPort: 8001
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: raftkv
+spec:
+  serviceName: raftkv-headless
+  replicas: 5
+  # Start all 5 pods concurrently rather than one-at-a-time: readiness only
+  # depends on the HTTP server being up, not on a leader being elected, so there
+  # is no bootstrap ordering requirement.
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: raftkv
+  template:
+    metadata:
+      labels:
+        app: raftkv
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: raftkv
+          image: raftkv:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9001
+              name: raft-grpc
+            - containerPort: 8001
+              name: client-http
+          env:
+            - name: RAFTKV_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: RAFTKV_REPLICAS
+              value: "5"
+            - name: RAFTKV_SERVICE
+              value: raftkv-headless
+            - name: RAFTKV_RAFT_ADDR
+              value: "0.0.0.0:9001"
+            - name: RAFTKV_HTTP_ADDR
+              value: "0.0.0.0:8001"
+          readinessProbe:
+            httpGet: { path: /status, port: 8001 }
+            initialDelaySeconds: 1
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: { path: /status, port: 8001 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
