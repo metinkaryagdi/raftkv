@@ -25,6 +25,7 @@ func main() {
 		raftAddr = flag.String("raft-addr", "", "host:port for inter-node gRPC (defaults to this node's entry in -peers)")
 		httpAddr = flag.String("http-addr", "", "host:port for the client HTTP API (default 127.0.0.1:8001)")
 		peersStr = flag.String("peers", "", "comma-separated id=host:port list for ALL nodes, including this one")
+		join     = flag.Bool("join", false, "start as a node awaiting a dynamic membership change (see POST /cluster/add-server) rather than a genesis cluster member; suppresses election-starting and vote-granting until a real leader makes contact")
 	)
 	flag.Parse()
 
@@ -34,24 +35,45 @@ func main() {
 	*raftAddr = orEnv(*raftAddr, "RAFTKV_RAFT_ADDR")
 	*httpAddr = orEnv(*httpAddr, "RAFTKV_HTTP_ADDR")
 	*peersStr = orEnv(*peersStr, "RAFTKV_PEERS")
+	if !*join {
+		*join = os.Getenv("RAFTKV_JOIN") != ""
+	}
+	if !*join {
+		*join = k8sPastGenesis(*id)
+	}
 	if *httpAddr == "" {
 		*httpAddr = "127.0.0.1:8001"
 	}
 	// Kubernetes StatefulSet mode: when no explicit peer list is given but a
 	// replica count is, derive the peer list from stable pod DNS names so every
-	// pod can share one identical spec (its id comes from the pod hostname).
+	// pod can share one identical spec (its id comes from the pod hostname). This
+	// applies whether or not -join is set: a scaled-up pod still benefits from
+	// knowing the full current membership up front rather than discovering peers
+	// one at a time (see k8sPeersFromEnv's ordinal check).
 	if *peersStr == "" {
 		if generated := k8sPeersFromEnv(*id); generated != "" {
 			*peersStr = generated
 		}
 	}
 
-	if *id == "" || *peersStr == "" {
-		log.Fatal("id and peers are required (flags -id/-peers or env RAFTKV_ID/RAFTKV_PEERS)")
+	if *id == "" {
+		log.Fatal("-id is required (flag or RAFTKV_ID)")
 	}
-	peers, err := parsePeers(*peersStr)
-	if err != nil {
-		log.Fatalf("invalid -peers: %v", err)
+	if *peersStr == "" && !*join {
+		log.Fatal("peers are required (flag -peers, env RAFTKV_PEERS, RAFTKV_REPLICAS-derived, or -join/RAFTKV_JOIN for a node awaiting a dynamic membership change)")
+	}
+
+	// peers may legitimately be empty here only when -join is set and no static
+	// list nor RAFTKV_REPLICAS applies (e.g. a Docker Compose node started with
+	// no prior knowledge at all, relying entirely on being told about the
+	// cluster via a future AppendEntries once /cluster/add-server admits it).
+	peers := map[string]string{}
+	if *peersStr != "" {
+		var err error
+		peers, err = parsePeers(*peersStr)
+		if err != nil {
+			log.Fatalf("invalid -peers: %v", err)
+		}
 	}
 	selfAddr := *raftAddr
 	if selfAddr == "" {
@@ -73,6 +95,7 @@ func main() {
 	node := raft.NewNode(raft.Config{
 		ID:        *id,
 		Peers:     raftPeers,
+		Joining:   *join,
 		Transport: transport,
 		// Timeouts are generous relative to the in-memory tests: real gRPC
 		// connections are dialed lazily on first use, so the election timeout must
@@ -116,11 +139,22 @@ func orEnv(val, envKey string) string {
 // k8sPeersFromEnv builds the peer list for a StatefulSet deployment from the
 // replica count and the headless service name, using the stable pod DNS that a
 // StatefulSet guarantees: pod <name>-<ordinal> is reachable at
-// <name>-<ordinal>.<service>:<port>. It returns "" if RAFTKV_REPLICAS is unset.
+// <name>-<ordinal>.<service>:<port>. It returns "" if RAFTKV_REPLICAS is unset
+// OR if this pod's own ordinal is >= RAFTKV_REPLICAS.
+//
+// The ordinal check matters for dynamic scale-up: RAFTKV_REPLICAS in the
+// StatefulSet template is meant to be bumped by the operator (e.g. via
+// `kubectl set env`) to the new total *before* scaling, so a scaled-up pod
+// (ordinal >= the OLD count, < the NEW one) gets a full peer list covering
+// every existing member automatically, with no separate discovery step. A pod
+// whose own ordinal is still >= the (possibly-bumped) count falls through to
+// -join/RAFTKV_JOIN instead — this only happens if an operator scales up
+// without bumping RAFTKV_REPLICAS first, a documented prerequisite rather than
+// something this function can detect and correct on its own.
 //
 // Env:
 //
-//	RAFTKV_REPLICAS   number of pods (e.g. "5")
+//	RAFTKV_REPLICAS   number of pods this deployment currently declares (e.g. "5")
 //	RAFTKV_SERVICE    headless service name (default: pod basename)
 //	RAFTKV_PEER_PORT  gRPC port (default: "9001")
 func k8sPeersFromEnv(id string) string {
@@ -132,10 +166,17 @@ func k8sPeersFromEnv(id string) string {
 	if err != nil || replicas < 1 {
 		log.Fatalf("invalid RAFTKV_REPLICAS %q", replicasStr)
 	}
-	// Pod names are "<basename>-<ordinal>"; strip the ordinal to get the basename.
+	// Pod names are "<basename>-<ordinal>"; split them apart.
 	basename := id
+	ordinal := -1
 	if i := strings.LastIndex(id, "-"); i > 0 {
 		basename = id[:i]
+		if n, err := strconv.Atoi(id[i+1:]); err == nil {
+			ordinal = n
+		}
+	}
+	if ordinal < 0 || ordinal >= replicas {
+		return ""
 	}
 	service := os.Getenv("RAFTKV_SERVICE")
 	if service == "" {
@@ -151,6 +192,39 @@ func k8sPeersFromEnv(id string) string {
 		parts = append(parts, fmt.Sprintf("%s=%s.%s:%s", pod, pod, service, port))
 	}
 	return strings.Join(parts, ",")
+}
+
+// k8sPastGenesis reports whether this pod's ordinal is at or past
+// RAFTKV_GENESIS_SIZE — the cluster's original size, frozen forever at
+// authoring time and never bumped (unlike RAFTKV_REPLICAS, which k8s-add-
+// node.sh deliberately bumps before each scale-up so a new pod's
+// k8sPeersFromEnv already covers every existing member). This is a separate
+// env var precisely because the two must diverge after the first scale-up: a
+// scaled-up pod needs a *full* peer list (from the bumped RAFTKV_REPLICAS) to
+// function well once admitted, but it must still start in Joining mode (to
+// avoid disrupting the real cluster with a premature election, per the
+// paper's "disruptive server" concern) even though it isn't missing any peer
+// addresses. Returns false if RAFTKV_GENESIS_SIZE is unset (e.g. Docker
+// Compose, or plain local runs) — those deployments rely solely on the
+// explicit -join/RAFTKV_JOIN flag instead.
+func k8sPastGenesis(id string) bool {
+	genesisStr := os.Getenv("RAFTKV_GENESIS_SIZE")
+	if genesisStr == "" {
+		return false
+	}
+	genesisSize, err := strconv.Atoi(genesisStr)
+	if err != nil || genesisSize < 1 {
+		log.Fatalf("invalid RAFTKV_GENESIS_SIZE %q", genesisStr)
+	}
+	i := strings.LastIndex(id, "-")
+	if i <= 0 {
+		return false
+	}
+	ordinal, err := strconv.Atoi(id[i+1:])
+	if err != nil {
+		return false
+	}
+	return ordinal >= genesisSize
 }
 
 func parsePeers(s string) (map[string]string, error) {

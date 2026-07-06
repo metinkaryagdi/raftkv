@@ -12,6 +12,21 @@
 # list itself from RAFTKV_REPLICAS + RAFTKV_SERVICE using the StatefulSet's
 # guaranteed stable DNS: <pod>.<service>:<port> (see k8sPeersFromEnv in
 # cmd/raftkv/main.go) — no per-pod config needed, all 5 pods share one spec.
+#
+# Scaling up (scripts/k8s-add-node.sh): RAFTKV_REPLICAS is deliberately bumped
+# (via `kubectl set env`) *before* `kubectl scale`, so a new pod's peer list
+# already covers every existing member. updateStrategy: OnDelete (below) is
+# what makes this safe: by default a StatefulSet's RollingUpdate strategy
+# reapplies a changed pod template to every EXISTING pod too, which would
+# restart (and, since state is in-memory only, wipe) the whole running
+# cluster the moment RAFTKV_REPLICAS changes — verified the hard way against a
+# live cluster while building this. OnDelete confines template changes to pods
+# that are actually (re)created — i.e. only the new one from `kubectl scale`.
+# RAFTKV_GENESIS_SIZE below is a SEPARATE value, frozen forever at "5": it is
+# how a pod decides whether it is one of the original members (boots normally)
+# or was added later via a scale-up (boots in -join mode, which avoids
+# disrupting the live cluster with a premature election even though it already
+# knows every peer's address — see k8sPastGenesis in cmd/raftkv/main.go).
 
 apiVersion: v1
 kind: Service
@@ -43,6 +58,12 @@ spec:
   # depends on the HTTP server being up, not on a leader being elected, so there
   # is no bootstrap ordering requirement.
   podManagementPolicy: Parallel
+  # OnDelete (not the default RollingUpdate): a pod template change (e.g.
+  # bumping RAFTKV_REPLICAS before a scale-up) must never touch already-running
+  # pods, only ones that are newly created or explicitly deleted. See the
+  # scaling note above the Service block.
+  updateStrategy:
+    type: OnDelete
   selector:
     matchLabels:
       app: raftkv
@@ -67,6 +88,8 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: RAFTKV_REPLICAS
+              value: "5"
+            - name: RAFTKV_GENESIS_SIZE
               value: "5"
             - name: RAFTKV_SERVICE
               value: raftkv-headless

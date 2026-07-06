@@ -90,6 +90,12 @@ func (n *Node) applyConfigChangeLocked(entryIndex uint64, cmd Command) pendingPe
 	if cmd.Op != "conf_change" {
 		return pendingPeerUpdate{}
 	}
+	// This entry is replicated to (and processed by) every member, including the
+	// node it names — n.peers means "the *other* nodes," so a node must never
+	// add itself when it happens to be processing the entry that added it.
+	if cmd.Key == n.id {
+		return pendingPeerUpdate{}
+	}
 	switch cmd.ConfigOp {
 	case "add":
 		if !containsString(n.peers, cmd.Key) {
@@ -153,8 +159,8 @@ func (n *Node) recomputeConfigFromLogLocked() {
 			continue
 		}
 		cmd := n.log[offset].Command
-		if cmd.Op != "conf_change" {
-			continue
+		if cmd.Op != "conf_change" || cmd.Key == n.id {
+			continue // n.peers never includes this node itself
 		}
 		switch cmd.ConfigOp {
 		case "add":
