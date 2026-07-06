@@ -1,11 +1,63 @@
 <!doctype html>
-<html>
-  <head><meta charset="utf-8"><title>raftkv lab</title></head>
-  <body style="font-family: sans-serif; padding: 2rem;">
-    <h1>raftkv lab backend is up</h1>
-    <p>The dashboard frontend lands in the next commit. In the meantime:</p>
-    <ul>
-      <li><a href="/api/nodes">/api/nodes</a></li>
-    </ul>
-  </body>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>raftkv lab</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>raftkv <span class="accent">lab</span></h1>
+    <div id="connection-status" class="pill pill-muted">connecting…</div>
+  </header>
+
+  <main>
+    <section class="panel" id="topology-panel">
+      <h2>Cluster topology</h2>
+      <svg id="topology" viewBox="0 0 600 360" role="img" aria-label="Raft cluster topology"></svg>
+      <div class="legend">
+        <span><i class="dot leader"></i> Leader</span>
+        <span><i class="dot candidate"></i> Candidate</span>
+        <span><i class="dot follower"></i> Follower</span>
+        <span><i class="dot unreachable"></i> Unreachable</span>
+      </div>
+    </section>
+
+    <section class="panel" id="controls-panel">
+      <h2>Controls</h2>
+      <div id="node-controls"></div>
+      <form id="membership-form">
+        <h3>Membership</h3>
+        <div class="form-row">
+          <input id="member-id" placeholder="node id (e.g. n6)" required>
+          <input id="member-addr" placeholder="raft addr (add only, e.g. raftkv-n6:9001)">
+        </div>
+        <div class="form-row">
+          <button type="submit" data-action="add">Add server</button>
+          <button type="submit" data-action="remove">Remove server</button>
+        </div>
+        <div id="membership-result" class="hint"></div>
+      </form>
+    </section>
+
+    <section class="panel" id="log-panel">
+      <h2>Log matrix</h2>
+      <div class="log-legend">
+        <span><i class="cell committed"></i> committed</span>
+        <span><i class="cell uncommitted"></i> uncommitted</span>
+        <span><i class="cell compacted"></i> compacted</span>
+        <span><i class="cell absent"></i> absent</span>
+      </div>
+      <div id="log-matrix" class="matrix-scroll"></div>
+    </section>
+
+    <section class="panel" id="events-panel">
+      <h2>Live events</h2>
+      <div id="event-feed"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
 </html>

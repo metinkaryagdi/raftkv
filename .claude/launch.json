@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "raftlab-compose",
+      "runtimeExecutable": "bin/raftlab.exe",
+      "runtimeArgs": ["--target=compose", "--dir=.", "--listen=:7070"],
+      "port": 7070
+    }
+  ]
+}

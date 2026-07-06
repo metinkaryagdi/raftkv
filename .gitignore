@@ -17,3 +17,6 @@ coverage.html
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Claude Code session-local state (launch.json itself IS committed — see below)
+.claude/scheduled_tasks.lock
