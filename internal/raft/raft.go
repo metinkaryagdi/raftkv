@@ -50,7 +50,17 @@ type Node struct {
 	// to RPCs; persistence is out of scope so it lives in memory). ---
 	currentTerm uint64
 	votedFor    string     // candidateID that received vote in currentTerm ("" = none)
-	log         []LogEntry // log entries; index 0 is a sentinel (term 0)
+	log         []LogEntry // retained log entries; log[0] is a movable sentinel
+
+	// lastIncludedIndex/Term describe the sentinel at log[0]: the logical index
+	// and term of the last entry folded into the most recent snapshot. Before any
+	// compaction these are (0, 0), identical to the original always-zero
+	// sentinel, so the no-snapshot case is unchanged. A logical index translates
+	// to a slice offset via `offset := logicalIndex - lastIncludedIndex`; offset 0
+	// is always the sentinel.
+	lastIncludedIndex uint64
+	lastIncludedTerm  uint64
+	snapshotData      []byte // last snapshot payload, opaque to raft; sent via InstallSnapshot
 
 	// --- Volatile state on all servers. ---
 	role        Role
@@ -78,6 +88,11 @@ type Node struct {
 	// machine. applySignal wakes the applier goroutine when commitIndex advances.
 	applyCh     chan ApplyMsg
 	applySignal chan struct{}
+
+	// snapshotCh delivers a state-machine snapshot whenever this node installs
+	// one received from a leader (see HandleInstallSnapshot in snapshot.go).
+	// Consumed by the state machine exactly like applyCh.
+	snapshotCh chan SnapshotMsg
 }
 
 // ApplyMsg is delivered on the apply channel for each newly committed entry.
@@ -119,14 +134,20 @@ func NewNode(cfg Config) *Node {
 		stopCh:      make(chan struct{}),
 		applyCh:     make(chan ApplyMsg, 256),
 		applySignal: make(chan struct{}, 1),
+		snapshotCh:  make(chan SnapshotMsg, 4),
 	}
 	n.resetElectionTimerLocked()
 	return n
 }
 
 // ApplyCh returns the channel on which committed commands are delivered. It is
-// consumed by the state machine (Phase 3).
+// consumed by the state machine.
 func (n *Node) ApplyCh() <-chan ApplyMsg { return n.applyCh }
+
+// SnapshotCh returns the channel on which installed snapshots are delivered
+// (see HandleInstallSnapshot). The state machine must load the snapshot's data,
+// replacing its current state, whenever a message arrives here.
+func (n *Node) SnapshotCh() <-chan SnapshotMsg { return n.snapshotCh }
 
 // ID returns the node's identifier.
 func (n *Node) ID() string { return n.id }

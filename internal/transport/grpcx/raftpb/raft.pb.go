@@ -369,6 +369,130 @@ func (x *AppendEntriesReply) GetConflictTerm() uint64 {
 	return 0
 }
 
+// Single, non-chunked snapshot transfer: this project's state machine is a
+// small map[string]string, not the multi-gigabyte case the paper's chunked
+// offset/done design targets, so streaming would add complexity without
+// solving any problem this project actually has.
+type InstallSnapshotRequest struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Term              uint64                 `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
+	LeaderId          string                 `protobuf:"bytes,2,opt,name=leader_id,json=leaderId,proto3" json:"leader_id,omitempty"`
+	LastIncludedIndex uint64                 `protobuf:"varint,3,opt,name=last_included_index,json=lastIncludedIndex,proto3" json:"last_included_index,omitempty"`
+	LastIncludedTerm  uint64                 `protobuf:"varint,4,opt,name=last_included_term,json=lastIncludedTerm,proto3" json:"last_included_term,omitempty"`
+	Data              []byte                 `protobuf:"bytes,5,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *InstallSnapshotRequest) Reset() {
+	*x = InstallSnapshotRequest{}
+	mi := &file_internal_transport_grpcx_raftpb_raft_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstallSnapshotRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstallSnapshotRequest) ProtoMessage() {}
+
+func (x *InstallSnapshotRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_transport_grpcx_raftpb_raft_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstallSnapshotRequest.ProtoReflect.Descriptor instead.
+func (*InstallSnapshotRequest) Descriptor() ([]byte, []int) {
+	return file_internal_transport_grpcx_raftpb_raft_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *InstallSnapshotRequest) GetTerm() uint64 {
+	if x != nil {
+		return x.Term
+	}
+	return 0
+}
+
+func (x *InstallSnapshotRequest) GetLeaderId() string {
+	if x != nil {
+		return x.LeaderId
+	}
+	return ""
+}
+
+func (x *InstallSnapshotRequest) GetLastIncludedIndex() uint64 {
+	if x != nil {
+		return x.LastIncludedIndex
+	}
+	return 0
+}
+
+func (x *InstallSnapshotRequest) GetLastIncludedTerm() uint64 {
+	if x != nil {
+		return x.LastIncludedTerm
+	}
+	return 0
+}
+
+func (x *InstallSnapshotRequest) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+type InstallSnapshotReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Term          uint64                 `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstallSnapshotReply) Reset() {
+	*x = InstallSnapshotReply{}
+	mi := &file_internal_transport_grpcx_raftpb_raft_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstallSnapshotReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstallSnapshotReply) ProtoMessage() {}
+
+func (x *InstallSnapshotReply) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_transport_grpcx_raftpb_raft_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstallSnapshotReply.ProtoReflect.Descriptor instead.
+func (*InstallSnapshotReply) Descriptor() ([]byte, []int) {
+	return file_internal_transport_grpcx_raftpb_raft_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *InstallSnapshotReply) GetTerm() uint64 {
+	if x != nil {
+		return x.Term
+	}
+	return 0
+}
+
 var File_internal_transport_grpcx_raftpb_raft_proto protoreflect.FileDescriptor
 
 const file_internal_transport_grpcx_raftpb_raft_proto_rawDesc = "" +
@@ -399,10 +523,19 @@ const file_internal_transport_grpcx_raftpb_raft_proto_rawDesc = "" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12%\n" +
 	"\x0econflict_index\x18\x03 \x01(\x04R\rconflictIndex\x12#\n" +
-	"\rconflict_term\x18\x04 \x01(\x04R\fconflictTerm2\x96\x01\n" +
+	"\rconflict_term\x18\x04 \x01(\x04R\fconflictTerm\"\xbb\x01\n" +
+	"\x16InstallSnapshotRequest\x12\x12\n" +
+	"\x04term\x18\x01 \x01(\x04R\x04term\x12\x1b\n" +
+	"\tleader_id\x18\x02 \x01(\tR\bleaderId\x12.\n" +
+	"\x13last_included_index\x18\x03 \x01(\x04R\x11lastIncludedIndex\x12,\n" +
+	"\x12last_included_term\x18\x04 \x01(\x04R\x10lastIncludedTerm\x12\x12\n" +
+	"\x04data\x18\x05 \x01(\fR\x04data\"*\n" +
+	"\x14InstallSnapshotReply\x12\x12\n" +
+	"\x04term\x18\x01 \x01(\x04R\x04term2\xe7\x01\n" +
 	"\x04Raft\x12C\n" +
 	"\vRequestVote\x12\x1a.raftpb.RequestVoteRequest\x1a\x18.raftpb.RequestVoteReply\x12I\n" +
-	"\rAppendEntries\x12\x1c.raftpb.AppendEntriesRequest\x1a\x1a.raftpb.AppendEntriesReplyBAZ?github.com/metinkaryagdi/raftkv/internal/transport/grpcx/raftpbb\x06proto3"
+	"\rAppendEntries\x12\x1c.raftpb.AppendEntriesRequest\x1a\x1a.raftpb.AppendEntriesReply\x12O\n" +
+	"\x0fInstallSnapshot\x12\x1e.raftpb.InstallSnapshotRequest\x1a\x1c.raftpb.InstallSnapshotReplyBAZ?github.com/metinkaryagdi/raftkv/internal/transport/grpcx/raftpbb\x06proto3"
 
 var (
 	file_internal_transport_grpcx_raftpb_raft_proto_rawDescOnce sync.Once
@@ -416,22 +549,26 @@ func file_internal_transport_grpcx_raftpb_raft_proto_rawDescGZIP() []byte {
 	return file_internal_transport_grpcx_raftpb_raft_proto_rawDescData
 }
 
-var file_internal_transport_grpcx_raftpb_raft_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_internal_transport_grpcx_raftpb_raft_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_internal_transport_grpcx_raftpb_raft_proto_goTypes = []any{
-	(*LogEntry)(nil),             // 0: raftpb.LogEntry
-	(*RequestVoteRequest)(nil),   // 1: raftpb.RequestVoteRequest
-	(*RequestVoteReply)(nil),     // 2: raftpb.RequestVoteReply
-	(*AppendEntriesRequest)(nil), // 3: raftpb.AppendEntriesRequest
-	(*AppendEntriesReply)(nil),   // 4: raftpb.AppendEntriesReply
+	(*LogEntry)(nil),               // 0: raftpb.LogEntry
+	(*RequestVoteRequest)(nil),     // 1: raftpb.RequestVoteRequest
+	(*RequestVoteReply)(nil),       // 2: raftpb.RequestVoteReply
+	(*AppendEntriesRequest)(nil),   // 3: raftpb.AppendEntriesRequest
+	(*AppendEntriesReply)(nil),     // 4: raftpb.AppendEntriesReply
+	(*InstallSnapshotRequest)(nil), // 5: raftpb.InstallSnapshotRequest
+	(*InstallSnapshotReply)(nil),   // 6: raftpb.InstallSnapshotReply
 }
 var file_internal_transport_grpcx_raftpb_raft_proto_depIdxs = []int32{
 	0, // 0: raftpb.AppendEntriesRequest.entries:type_name -> raftpb.LogEntry
 	1, // 1: raftpb.Raft.RequestVote:input_type -> raftpb.RequestVoteRequest
 	3, // 2: raftpb.Raft.AppendEntries:input_type -> raftpb.AppendEntriesRequest
-	2, // 3: raftpb.Raft.RequestVote:output_type -> raftpb.RequestVoteReply
-	4, // 4: raftpb.Raft.AppendEntries:output_type -> raftpb.AppendEntriesReply
-	3, // [3:5] is the sub-list for method output_type
-	1, // [1:3] is the sub-list for method input_type
+	5, // 3: raftpb.Raft.InstallSnapshot:input_type -> raftpb.InstallSnapshotRequest
+	2, // 4: raftpb.Raft.RequestVote:output_type -> raftpb.RequestVoteReply
+	4, // 5: raftpb.Raft.AppendEntries:output_type -> raftpb.AppendEntriesReply
+	6, // 6: raftpb.Raft.InstallSnapshot:output_type -> raftpb.InstallSnapshotReply
+	4, // [4:7] is the sub-list for method output_type
+	1, // [1:4] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -448,7 +585,7 @@ func file_internal_transport_grpcx_raftpb_raft_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_transport_grpcx_raftpb_raft_proto_rawDesc), len(file_internal_transport_grpcx_raftpb_raft_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

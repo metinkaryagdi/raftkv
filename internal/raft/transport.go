@@ -18,6 +18,11 @@ type Transport interface {
 
 	// SendAppendEntries sends an AppendEntries RPC to the peer identified by target.
 	SendAppendEntries(target string, args *AppendEntriesArgs) (*AppendEntriesReply, error)
+
+	// SendInstallSnapshot sends an InstallSnapshot RPC to the peer identified by
+	// target, used when the peer needs log entries the leader has already
+	// compacted away.
+	SendInstallSnapshot(target string, args *InstallSnapshotArgs) (*InstallSnapshotReply, error)
 }
 
 // RPCHandler is the inbound side: it is implemented by *Node so a transport can
@@ -25,4 +30,17 @@ type Transport interface {
 type RPCHandler interface {
 	HandleRequestVote(args *RequestVoteArgs) *RequestVoteReply
 	HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply
+	HandleInstallSnapshot(args *InstallSnapshotArgs) *InstallSnapshotReply
+}
+
+// PeerManager is implemented by transports that need explicit address
+// bookkeeping to add or remove peers at runtime (required for dynamic
+// membership changes). inmem's transport needs no such bookkeeping — routing
+// there is already keyed by node id via the shared Network — so it does not
+// implement this; grpcx.Transport does, since it must know an address to dial.
+// raft.Node type-asserts its transport against this interface and calls it only
+// if the concrete transport implements it.
+type PeerManager interface {
+	AddPeer(id, addr string)
+	RemovePeer(id string)
 }

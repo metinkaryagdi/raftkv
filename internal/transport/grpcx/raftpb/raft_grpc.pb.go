@@ -19,18 +19,21 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Raft_RequestVote_FullMethodName   = "/raftpb.Raft/RequestVote"
-	Raft_AppendEntries_FullMethodName = "/raftpb.Raft/AppendEntries"
+	Raft_RequestVote_FullMethodName     = "/raftpb.Raft/RequestVote"
+	Raft_AppendEntries_FullMethodName   = "/raftpb.Raft/AppendEntries"
+	Raft_InstallSnapshot_FullMethodName = "/raftpb.Raft/InstallSnapshot"
 )
 
 // RaftClient is the client API for Raft service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Raft is the inter-node RPC surface: exactly the two RPCs from the paper.
+// Raft is the inter-node RPC surface: leader election, log replication, and log
+// compaction catch-up.
 type RaftClient interface {
 	RequestVote(ctx context.Context, in *RequestVoteRequest, opts ...grpc.CallOption) (*RequestVoteReply, error)
 	AppendEntries(ctx context.Context, in *AppendEntriesRequest, opts ...grpc.CallOption) (*AppendEntriesReply, error)
+	InstallSnapshot(ctx context.Context, in *InstallSnapshotRequest, opts ...grpc.CallOption) (*InstallSnapshotReply, error)
 }
 
 type raftClient struct {
@@ -61,14 +64,26 @@ func (c *raftClient) AppendEntries(ctx context.Context, in *AppendEntriesRequest
 	return out, nil
 }
 
+func (c *raftClient) InstallSnapshot(ctx context.Context, in *InstallSnapshotRequest, opts ...grpc.CallOption) (*InstallSnapshotReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InstallSnapshotReply)
+	err := c.cc.Invoke(ctx, Raft_InstallSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RaftServer is the server API for Raft service.
 // All implementations must embed UnimplementedRaftServer
 // for forward compatibility.
 //
-// Raft is the inter-node RPC surface: exactly the two RPCs from the paper.
+// Raft is the inter-node RPC surface: leader election, log replication, and log
+// compaction catch-up.
 type RaftServer interface {
 	RequestVote(context.Context, *RequestVoteRequest) (*RequestVoteReply, error)
 	AppendEntries(context.Context, *AppendEntriesRequest) (*AppendEntriesReply, error)
+	InstallSnapshot(context.Context, *InstallSnapshotRequest) (*InstallSnapshotReply, error)
 	mustEmbedUnimplementedRaftServer()
 }
 
@@ -84,6 +99,9 @@ func (UnimplementedRaftServer) RequestVote(context.Context, *RequestVoteRequest)
 }
 func (UnimplementedRaftServer) AppendEntries(context.Context, *AppendEntriesRequest) (*AppendEntriesReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method AppendEntries not implemented")
+}
+func (UnimplementedRaftServer) InstallSnapshot(context.Context, *InstallSnapshotRequest) (*InstallSnapshotReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method InstallSnapshot not implemented")
 }
 func (UnimplementedRaftServer) mustEmbedUnimplementedRaftServer() {}
 func (UnimplementedRaftServer) testEmbeddedByValue()              {}
@@ -142,6 +160,24 @@ func _Raft_AppendEntries_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Raft_InstallSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InstallSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServer).InstallSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Raft_InstallSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServer).InstallSnapshot(ctx, req.(*InstallSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Raft_ServiceDesc is the grpc.ServiceDesc for Raft service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -156,6 +192,10 @@ var Raft_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AppendEntries",
 			Handler:    _Raft_AppendEntries_Handler,
+		},
+		{
+			MethodName: "InstallSnapshot",
+			Handler:    _Raft_InstallSnapshot_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

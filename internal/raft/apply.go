@@ -31,7 +31,7 @@ func (n *Node) maybeAdvanceCommitLocked() {
 	lastIdx, _ := n.lastLogInfoLocked()
 	quorum := n.quorum()
 	for N := lastIdx; N > n.commitIndex; N-- {
-		if n.log[N].Term != n.currentTerm {
+		if n.log[n.offsetLocked(N)].Term != n.currentTerm {
 			// Terms only increase along the log, so no lower index can be in the
 			// current term either; stop scanning.
 			break
@@ -77,7 +77,7 @@ func (n *Node) applier() {
 				break
 			}
 			n.lastApplied++
-			entry := n.log[n.lastApplied]
+			entry := n.log[n.offsetLocked(n.lastApplied)]
 			n.mu.Unlock()
 
 			msg := ApplyMsg{Index: entry.Index, Term: entry.Term, Command: entry.Command}

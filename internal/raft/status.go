@@ -9,7 +9,15 @@ type Status struct {
 	LeaderID    string
 	CommitIndex uint64
 	LastApplied uint64
-	LogLength   int
+	// LogLength is the logical number of entries that have ever existed
+	// (compacted-away entries plus retained ones), not just what's in memory —
+	// otherwise this number would inexplicably shrink after every compaction,
+	// which would look like data loss to a caller such as the lab dashboard.
+	LogLength int
+	// LastIncludedIndex is the highest index folded into the most recent
+	// snapshot (0 if none yet). Combine with LogCopy(), whose entries start
+	// right after this index, to interpret log positions correctly.
+	LastIncludedIndex uint64
 }
 
 // Status returns a consistent snapshot of the node's current state.
@@ -17,13 +25,14 @@ func (n *Node) Status() Status {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return Status{
-		ID:          n.id,
-		Role:        n.role,
-		Term:        n.currentTerm,
-		LeaderID:    n.leaderID,
-		CommitIndex: n.commitIndex,
-		LastApplied: n.lastApplied,
-		LogLength:   len(n.log) - 1, // exclude sentinel
+		ID:                n.id,
+		Role:              n.role,
+		Term:              n.currentTerm,
+		LeaderID:          n.leaderID,
+		CommitIndex:       n.commitIndex,
+		LastApplied:       n.lastApplied,
+		LogLength:         int(n.lastIncludedIndex) + len(n.log) - 1, // exclude sentinel
+		LastIncludedIndex: n.lastIncludedIndex,
 	}
 }
 

@@ -59,3 +59,59 @@ func TestDeterminism(t *testing.T) {
 		}
 	}
 }
+
+// TestRestore confirms Restore replaces state wholesale (not a merge): keys
+// absent from the given map must be gone afterward, not just overwritten ones.
+func TestRestore(t *testing.T) {
+	s := New()
+	s.Apply("set", "stale", "x")
+	s.Apply("set", "kept", "old")
+
+	s.Restore(map[string]string{"kept": "new", "fresh": "1"})
+
+	if v, ok := s.Get("stale"); ok {
+		t.Fatalf("Get(stale)=%q,%v; want gone after Restore", v, ok)
+	}
+	if v, ok := s.Get("kept"); !ok || v != "new" {
+		t.Fatalf("Get(kept)=%q,%v; want new,true", v, ok)
+	}
+	if v, ok := s.Get("fresh"); !ok || v != "1" {
+		t.Fatalf("Get(fresh)=%q,%v; want 1,true", v, ok)
+	}
+}
+
+// TestMarshalUnmarshalSnapshotRoundTrip confirms the JSON snapshot payload sent
+// over InstallSnapshot round-trips exactly: what one store marshals, another
+// must unmarshal into an identical state.
+func TestMarshalUnmarshalSnapshotRoundTrip(t *testing.T) {
+	src := New()
+	src.Apply("set", "a", "1")
+	src.Apply("set", "b", "2")
+	src.Apply("delete", "a", "")
+	src.Apply("set", "c", "3")
+
+	data, err := src.MarshalSnapshot()
+	if err != nil {
+		t.Fatalf("MarshalSnapshot: %v", err)
+	}
+
+	dst := New()
+	dst.Apply("set", "should-be-wiped", "yes") // must not survive UnmarshalSnapshot
+	if err := dst.UnmarshalSnapshot(data); err != nil {
+		t.Fatalf("UnmarshalSnapshot: %v", err)
+	}
+
+	want := src.Snapshot()
+	got := dst.Snapshot()
+	if len(got) != len(want) {
+		t.Fatalf("restored snapshot=%v; want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("key %q: restored %q, want %q", k, got[k], v)
+		}
+	}
+	if _, ok := got["should-be-wiped"]; ok {
+		t.Fatal("UnmarshalSnapshot should replace state wholesale, not merge")
+	}
+}

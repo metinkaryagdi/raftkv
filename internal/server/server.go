@@ -24,36 +24,51 @@ var (
 	ErrTimeout = errors.New("timed out waiting for commit")
 )
 
+// defaultSnapshotThreshold is how many entries the server applies between
+// snapshots by default: large enough that ordinary test/demo traffic (tens to
+// hundreds of commands) never spuriously triggers one, so tests exercising the
+// snapshot path do so deliberately via SetSnapshotThreshold.
+const defaultSnapshotThreshold = 1000
+
 // Server is a single KV node: a Raft node plus the state machine it drives.
 type Server struct {
 	node  *raft.Node
 	store *kvstore.Store
 
-	commitTimeout time.Duration
+	commitTimeout     time.Duration
+	snapshotThreshold uint64
 
 	done chan struct{}
 
 	// apply progress. appliedTerms[i] is the term of the entry applied at index i;
 	// waitApplied polls these fields to learn when a proposal became durable.
-	mu           sync.Mutex
-	appliedIndex uint64
-	appliedTerms []uint64
+	mu             sync.Mutex
+	appliedIndex   uint64
+	appliedTerms   []uint64
+	lastSnapshotAt uint64 // logical index of the last entry folded into a snapshot
 }
 
 // New wraps a constructed (but not started) raft.Node.
 func New(node *raft.Node) *Server {
 	return &Server{
-		node:          node,
-		store:         kvstore.New(),
-		commitTimeout: 2 * time.Second,
-		done:          make(chan struct{}),
-		appliedTerms:  []uint64{0}, // index 0 sentinel
+		node:              node,
+		store:             kvstore.New(),
+		commitTimeout:     2 * time.Second,
+		snapshotThreshold: defaultSnapshotThreshold,
+		done:              make(chan struct{}),
+		appliedTerms:      []uint64{0}, // index 0 sentinel
 	}
 }
 
 // SetCommitTimeout overrides how long a write waits for commit before returning
 // ErrTimeout. Useful for tests and for tuning client-facing latency.
 func (s *Server) SetCommitTimeout(d time.Duration) { s.commitTimeout = d }
+
+// SetSnapshotThreshold overrides how many entries are applied between
+// snapshots (default 1000). Tests lower this to exercise the snapshot/
+// InstallSnapshot path deterministically without submitting thousands of
+// commands.
+func (s *Server) SetSnapshotThreshold(n int) { s.snapshotThreshold = uint64(n) }
 
 // Node exposes the underlying raft node (status, lifecycle).
 func (s *Server) Node() *raft.Node { return s.node }
@@ -77,14 +92,32 @@ func (s *Server) Stop() {
 }
 
 // applyLoop consumes committed entries and applies them to the store in index
-// order, recording progress so client writes can wait for durability.
+// order, recording progress so client writes can wait for durability. It also
+// consumes installed snapshots (delivered when this node was too far behind and
+// had to catch up via InstallSnapshot instead of normal replication) and, on the
+// leader-applied side, triggers compaction once enough entries have piled up.
 func (s *Server) applyLoop() {
-	ch := s.node.ApplyCh()
+	applyCh := s.node.ApplyCh()
+	snapshotCh := s.node.SnapshotCh()
 	for {
 		select {
 		case <-s.done:
 			return
-		case msg := <-ch:
+		case msg := <-snapshotCh:
+			if err := s.store.UnmarshalSnapshot(msg.Data); err != nil {
+				// The state machine could not load the snapshot; nothing sensible to
+				// do but leave it as-is and let replication keep this node's applied
+				// state as the source of truth until a future snapshot succeeds.
+				continue
+			}
+			s.mu.Lock()
+			s.appliedIndex = msg.LastIncludedIndex
+			s.lastSnapshotAt = msg.LastIncludedIndex
+			for uint64(len(s.appliedTerms)) <= msg.LastIncludedIndex {
+				s.appliedTerms = append(s.appliedTerms, 0)
+			}
+			s.mu.Unlock()
+		case msg := <-applyCh:
 			s.store.Apply(msg.Command.Op, msg.Command.Key, msg.Command.Value)
 			s.mu.Lock()
 			s.appliedIndex = msg.Index
@@ -92,9 +125,31 @@ func (s *Server) applyLoop() {
 				s.appliedTerms = append(s.appliedTerms, 0)
 			}
 			s.appliedTerms[msg.Index] = msg.Term
+			due := msg.Index-s.lastSnapshotAt >= s.snapshotThreshold
 			s.mu.Unlock()
+
+			if due {
+				s.maybeCompact(msg.Index)
+			}
 		}
 	}
+}
+
+// maybeCompact takes a snapshot of the state machine and asks Raft to discard
+// log entries up to upToIndex. Errors are non-fatal: compaction is an
+// optimization, not a correctness requirement, so a failed attempt just means
+// the log stays a bit longer and the next threshold crossing tries again.
+func (s *Server) maybeCompact(upToIndex uint64) {
+	data, err := s.store.MarshalSnapshot()
+	if err != nil {
+		return
+	}
+	if err := s.node.CompactLog(data, upToIndex); err != nil {
+		return
+	}
+	s.mu.Lock()
+	s.lastSnapshotAt = upToIndex
+	s.mu.Unlock()
 }
 
 // Set proposes a key/value write and blocks until it is committed and applied, or

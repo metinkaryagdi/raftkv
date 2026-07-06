@@ -54,6 +54,12 @@ func (c *svcCluster) setCommitTimeout(d time.Duration) {
 	}
 }
 
+func (c *svcCluster) setSnapshotThreshold(n int) {
+	for _, id := range c.ids {
+		c.servers[id].SetSnapshotThreshold(n)
+	}
+}
+
 // aliveIDs returns all node ids except the excluded ones.
 func (c *svcCluster) aliveIDs(exclude ...string) []string {
 	skip := map[string]bool{}

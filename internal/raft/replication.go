@@ -33,11 +33,18 @@ func (n *Node) replicateToPeer(peer string, term uint64) {
 	if nextIdx < 1 {
 		nextIdx = 1
 	}
+	// The peer needs entries this leader has already compacted away: it must
+	// catch up via InstallSnapshot instead of AppendEntries.
+	if nextIdx <= n.lastIncludedIndex {
+		n.mu.Unlock()
+		n.sendSnapshotToPeer(peer, term)
+		return
+	}
 	prevLogIndex := nextIdx - 1
 	prevLogTerm := n.termAtLocked(prevLogIndex)
 
 	// Defensive copy so the leader can keep appending while this RPC is in flight.
-	tail := n.log[nextIdx:]
+	tail := n.log[n.offsetLocked(nextIdx):]
 	entries := make([]LogEntry, len(tail))
 	copy(entries, tail)
 
@@ -96,10 +103,15 @@ func (n *Node) backoffNextIndexLocked(reply *AppendEntriesReply) uint64 {
 		return reply.ConflictIndex
 	}
 	// Look for the last entry the leader has in ConflictTerm. Terms increase along
-	// the log, so we can stop once we drop below the conflict term.
+	// the log, so we can stop once we drop below the conflict term. i is a slice
+	// offset (never the sentinel at offset 0); translate back to a logical index
+	// on return. If the leader has already compacted past the entries it would
+	// need to check, the loop simply finds nothing and falls through — the
+	// caller's next round then sees nextIndex <= lastIncludedIndex and correctly
+	// switches to InstallSnapshot.
 	for i := len(n.log) - 1; i >= 1; i-- {
 		if n.log[i].Term == reply.ConflictTerm {
-			return uint64(i) + 1
+			return uint64(i) + n.lastIncludedIndex + 1
 		}
 		if n.log[i].Term < reply.ConflictTerm {
 			break

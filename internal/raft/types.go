@@ -1,9 +1,7 @@
 // Package raft implements the core of the Raft consensus algorithm as described
-// in "In Search of an Understandable Consensus Algorithm" (Ongaro & Ousterhout).
-//
-// The scope is deliberately limited to the core protocol: leader election and
-// log replication driving a replicated state machine. Log compaction/snapshots
-// and dynamic cluster membership changes are intentionally out of scope.
+// in "In Search of an Understandable Consensus Algorithm" (Ongaro & Ousterhout):
+// leader election, log replication, log compaction via snapshotting (§7), and
+// single-server cluster membership changes (§6).
 package raft
 
 // Role is the current role of a node in the Raft state machine.
@@ -49,10 +47,16 @@ type LogEntry struct {
 // the state machine is an in-memory key-value store, so Op is one of
 // "set"/"delete" (and "noop" for the leader's no-op entry). Reads are served
 // outside the log and are not represented here.
+//
+// Op "conf_change" is handled specially by raft itself rather than the state
+// machine (which ignores it, the same way it already ignores "noop"): ConfigOp
+// is "add" or "remove", Key is the target node's id, and Value is the target's
+// network address (meaningful only for "add").
 type Command struct {
-	Op    string // "set", "delete", "noop"
-	Key   string
-	Value string
+	Op       string // "set", "delete", "noop", "conf_change"
+	Key      string
+	Value    string
+	ConfigOp string // "add" or "remove"; only set when Op == "conf_change"
 }
 
 // RequestVoteArgs are the arguments for the RequestVote RPC (§5.2, §5.4).
@@ -89,4 +93,24 @@ type AppendEntriesReply struct {
 
 	ConflictIndex uint64 // first index of the conflicting term (optimization)
 	ConflictTerm  uint64 // the conflicting term itself (optimization)
+}
+
+// InstallSnapshotArgs are the arguments for the InstallSnapshot RPC (§7), sent
+// by a leader to a follower whose required log entries have already been
+// compacted away. Unlike the paper's chunked design (meant for state machines
+// too large to fit in one RPC message), this project sends the whole snapshot
+// in a single, non-chunked call: the state machine is a small map[string]string,
+// so the offset/done streaming fields the paper uses would add complexity
+// without solving any problem this project actually has.
+type InstallSnapshotArgs struct {
+	Term              uint64 // leader's term
+	LeaderID          string
+	LastIncludedIndex uint64 // the snapshot replaces all entries up to and including this index
+	LastIncludedTerm  uint64 // term of LastIncludedIndex
+	Data              []byte // serialized state machine snapshot (opaque to raft)
+}
+
+// InstallSnapshotReply is the response to an InstallSnapshot RPC.
+type InstallSnapshotReply struct {
+	Term uint64 // currentTerm, for leader to update itself
 }

@@ -23,6 +23,11 @@ import (
 // stalling an election or a replication round.
 const callTimeout = 300 * time.Millisecond
 
+// snapshotCallTimeout is longer than callTimeout: InstallSnapshot carries the
+// full serialized state machine, which can take meaningfully longer to
+// transfer than the small, fixed-size RequestVote/AppendEntries messages.
+const snapshotCallTimeout = 5 * time.Second
+
 // --- Server: adapts an inbound gRPC call to a raft.RPCHandler ---
 
 // Server exposes a node's RPCHandler over gRPC on a TCP listener.
@@ -85,6 +90,17 @@ func (s *Server) AppendEntries(_ context.Context, req *raftpb.AppendEntriesReque
 		ConflictIndex: reply.ConflictIndex,
 		ConflictTerm:  reply.ConflictTerm,
 	}, nil
+}
+
+func (s *Server) InstallSnapshot(_ context.Context, req *raftpb.InstallSnapshotRequest) (*raftpb.InstallSnapshotReply, error) {
+	reply := s.handler.HandleInstallSnapshot(&raft.InstallSnapshotArgs{
+		Term:              req.Term,
+		LeaderID:          req.LeaderId,
+		LastIncludedIndex: req.LastIncludedIndex,
+		LastIncludedTerm:  req.LastIncludedTerm,
+		Data:              req.Data,
+	})
+	return &raftpb.InstallSnapshotReply{Term: reply.Term}, nil
 }
 
 // --- Transport: adapts raft.Transport to outbound gRPC calls ---
@@ -194,6 +210,26 @@ func (t *Transport) SendAppendEntries(target string, args *raft.AppendEntriesArg
 		ConflictIndex: resp.ConflictIndex,
 		ConflictTerm:  resp.ConflictTerm,
 	}, nil
+}
+
+func (t *Transport) SendInstallSnapshot(target string, args *raft.InstallSnapshotArgs) (*raft.InstallSnapshotReply, error) {
+	cli, err := t.client(target)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), snapshotCallTimeout)
+	defer cancel()
+	resp, err := cli.InstallSnapshot(ctx, &raftpb.InstallSnapshotRequest{
+		Term:              args.Term,
+		LeaderId:          args.LeaderID,
+		LastIncludedIndex: args.LastIncludedIndex,
+		LastIncludedTerm:  args.LastIncludedTerm,
+		Data:              args.Data,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &raft.InstallSnapshotReply{Term: resp.Term}, nil
 }
 
 // --- conversions ---

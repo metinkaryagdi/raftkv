@@ -160,3 +160,14 @@ func (e *endpoint) SendAppendEntries(target string, args *raft.AppendEntriesArgs
 	}
 	return h.HandleAppendEntries(args), nil
 }
+
+func (e *endpoint) SendInstallSnapshot(target string, args *raft.InstallSnapshotArgs) (*raft.InstallSnapshotReply, error) {
+	h, delay, ok := e.net.deliverable(e.from, target)
+	if !ok {
+		return nil, ErrUnreachable
+	}
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	return h.HandleInstallSnapshot(args), nil
+}

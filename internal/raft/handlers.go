@@ -65,6 +65,17 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 	n.resetElectionTimerLocked()
 	reply.Term = n.currentTerm
 
+	// The leader is (redundantly, or just after we installed a snapshot) sending
+	// entries anchored before what we've already compacted past. Everything up to
+	// and including lastIncludedIndex is by definition already committed and
+	// covered by our snapshot, so there is no real conflict to detect here —
+	// accept unconditionally without touching the log. This only fires
+	// transiently right after an InstallSnapshot lands.
+	if args.PrevLogIndex < n.lastIncludedIndex {
+		reply.Success = true
+		return reply
+	}
+
 	lastIdx, _ := n.lastLogInfoLocked()
 
 	// Consistency check 1: we must actually have an entry at PrevLogIndex.
@@ -77,12 +88,14 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 
 	// Consistency check 2: the terms at PrevLogIndex must match. If not, report
 	// the first index of our conflicting term so the leader can back up a whole
-	// term at once.
+	// term at once. The scan never walks at or below lastIncludedIndex — there is
+	// no real term data there, and self-healing via InstallSnapshot handles it if
+	// the leader needs to back up further than that.
 	if got := n.termAtLocked(args.PrevLogIndex); got != args.PrevLogTerm {
 		reply.Success = false
 		reply.ConflictTerm = got
 		ci := args.PrevLogIndex
-		for ci > 1 && n.termAtLocked(ci-1) == got {
+		for ci > n.lastIncludedIndex+1 && n.termAtLocked(ci-1) == got {
 			ci--
 		}
 		reply.ConflictIndex = ci
@@ -96,9 +109,10 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 	for i := range args.Entries {
 		entry := args.Entries[i]
 		idx := args.PrevLogIndex + 1 + uint64(i)
-		if idx < uint64(len(n.log)) {
-			if n.log[idx].Term != entry.Term {
-				n.log = n.log[:idx]
+		offset := n.offsetLocked(idx)
+		if offset < len(n.log) {
+			if n.log[offset].Term != entry.Term {
+				n.log = n.log[:offset]
 				n.log = append(n.log, entry)
 			}
 		} else {
