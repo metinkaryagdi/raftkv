@@ -63,11 +63,13 @@ func (n *Node) ProposeConfigChange(cmd Command) (index uint64, term uint64, err 
 	index = lastIdx + 1
 	entry := LogEntry{Term: term, Index: index, Command: cmd}
 	n.log = append(n.log, entry)
-	n.applyConfigChangeLocked(index, cmd)
+	pending := n.applyConfigChangeLocked(index, cmd)
 	n.logger.Event(n.id, Event{Kind: "conf_change_proposed", Term: term, Role: Leader,
 		Peer: cmd.Key, Info: cmd.ConfigOp})
+	transport := n.transport
 	n.mu.Unlock()
 
+	pending.apply(transport)
 	n.broadcastAppendEntries()
 	return index, term, nil
 }
@@ -79,9 +81,14 @@ func (n *Node) ProposeConfigChange(cmd Command) (index uint64, term uint64, err 
 // node that has this entry in its log at all — committed or not — agrees on
 // what the current configuration is. entryIndex is the log index cmd itself
 // occupies. Caller must hold mu.
-func (n *Node) applyConfigChangeLocked(entryIndex uint64, cmd Command) {
+//
+// It returns a pendingPeerUpdate describing any transport-level address
+// bookkeeping the caller must apply — the caller must do so only *after*
+// unlocking, per the package's rule that RPCs (and PeerManager, which may
+// eagerly dial) are never touched while holding mu.
+func (n *Node) applyConfigChangeLocked(entryIndex uint64, cmd Command) pendingPeerUpdate {
 	if cmd.Op != "conf_change" {
-		return
+		return pendingPeerUpdate{}
 	}
 	switch cmd.ConfigOp {
 	case "add":
@@ -92,10 +99,38 @@ func (n *Node) applyConfigChangeLocked(entryIndex uint64, cmd Command) {
 		// conflict-backtracking mechanism self-heals if this guess is off.
 		n.nextIndex[cmd.Key] = entryIndex
 		n.matchIndex[cmd.Key] = 0
+		return pendingPeerUpdate{id: cmd.Key, addr: cmd.Value, add: true, changed: true}
 	case "remove":
 		n.peers = removeString(n.peers, cmd.Key)
 		delete(n.nextIndex, cmd.Key)
 		delete(n.matchIndex, cmd.Key)
+		return pendingPeerUpdate{id: cmd.Key, changed: true}
+	}
+	return pendingPeerUpdate{}
+}
+
+// pendingPeerUpdate is the deferred, post-unlock half of applyConfigChangeLocked.
+type pendingPeerUpdate struct {
+	id      string
+	addr    string
+	add     bool
+	changed bool
+}
+
+// apply invokes the transport's PeerManager methods (if it implements that
+// optional interface) to reflect the update. Must be called without holding mu.
+func (u pendingPeerUpdate) apply(t Transport) {
+	if !u.changed {
+		return
+	}
+	pm, ok := t.(PeerManager)
+	if !ok {
+		return
+	}
+	if u.add {
+		pm.AddPeer(u.id, u.addr)
+	} else {
+		pm.RemovePeer(u.id)
 	}
 }
 

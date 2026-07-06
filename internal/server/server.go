@@ -22,6 +22,9 @@ var (
 	ErrLostLeadership = errors.New("leadership changed before commit")
 	// ErrTimeout means the write was not committed within the deadline.
 	ErrTimeout = errors.New("timed out waiting for commit")
+	// ErrConfigChangeInFlight means a membership change was proposed while a
+	// previous one had not yet committed. Only one may be in flight at a time.
+	ErrConfigChangeInFlight = errors.New("a configuration change is already in flight")
 )
 
 // defaultSnapshotThreshold is how many entries the server applies between
@@ -161,6 +164,30 @@ func (s *Server) Set(key, value string) error {
 // Delete proposes a key deletion, with the same semantics as Set.
 func (s *Server) Delete(key string) error {
 	return s.propose(raft.Command{Op: "delete", Key: key})
+}
+
+// AddServer proposes adding a node to the cluster's configuration and blocks
+// until the change commits, or fails. Only the leader can accept it, and only
+// one configuration change may be in flight at a time (ErrConfigChangeInFlight).
+func (s *Server) AddServer(id, raftAddr string) error {
+	return s.proposeConfigChange(raft.Command{Op: "conf_change", ConfigOp: "add", Key: id, Value: raftAddr})
+}
+
+// RemoveServer proposes removing a node from the cluster's configuration, with
+// the same semantics as AddServer.
+func (s *Server) RemoveServer(id string) error {
+	return s.proposeConfigChange(raft.Command{Op: "conf_change", ConfigOp: "remove", Key: id})
+}
+
+func (s *Server) proposeConfigChange(cmd raft.Command) error {
+	index, term, err := s.node.ProposeConfigChange(cmd)
+	if err != nil {
+		if errors.Is(err, raft.ErrConfigChangeInFlight) {
+			return ErrConfigChangeInFlight
+		}
+		return ErrNotLeader
+	}
+	return s.waitApplied(index, term, s.commitTimeout)
 }
 
 func (s *Server) propose(cmd raft.Command) error {

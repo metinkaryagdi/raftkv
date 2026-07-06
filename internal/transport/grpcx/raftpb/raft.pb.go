@@ -22,12 +22,16 @@ const (
 )
 
 type LogEntry struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Term          uint64                 `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
-	Index         uint64                 `protobuf:"varint,2,opt,name=index,proto3" json:"index,omitempty"`
-	Op            string                 `protobuf:"bytes,3,opt,name=op,proto3" json:"op,omitempty"`
-	Key           string                 `protobuf:"bytes,4,opt,name=key,proto3" json:"key,omitempty"`
-	Value         string                 `protobuf:"bytes,5,opt,name=value,proto3" json:"value,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Term  uint64                 `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
+	Index uint64                 `protobuf:"varint,2,opt,name=index,proto3" json:"index,omitempty"`
+	Op    string                 `protobuf:"bytes,3,opt,name=op,proto3" json:"op,omitempty"`
+	Key   string                 `protobuf:"bytes,4,opt,name=key,proto3" json:"key,omitempty"`
+	Value string                 `protobuf:"bytes,5,opt,name=value,proto3" json:"value,omitempty"`
+	// config_op is "add" or "remove", set only when op == "conf_change". A
+	// dedicated field rather than overloading key/value avoids colliding with
+	// their existing meaning ("target key" / "value to set").
+	ConfigOp      string `protobuf:"bytes,6,opt,name=config_op,json=configOp,proto3" json:"config_op,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -93,6 +97,13 @@ func (x *LogEntry) GetKey() string {
 func (x *LogEntry) GetValue() string {
 	if x != nil {
 		return x.Value
+	}
+	return ""
+}
+
+func (x *LogEntry) GetConfigOp() string {
+	if x != nil {
+		return x.ConfigOp
 	}
 	return ""
 }
@@ -497,13 +508,14 @@ var File_internal_transport_grpcx_raftpb_raft_proto protoreflect.FileDescriptor
 
 const file_internal_transport_grpcx_raftpb_raft_proto_rawDesc = "" +
 	"\n" +
-	"*internal/transport/grpcx/raftpb/raft.proto\x12\x06raftpb\"l\n" +
+	"*internal/transport/grpcx/raftpb/raft.proto\x12\x06raftpb\"\x89\x01\n" +
 	"\bLogEntry\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\x04R\x05index\x12\x0e\n" +
 	"\x02op\x18\x03 \x01(\tR\x02op\x12\x10\n" +
 	"\x03key\x18\x04 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x05 \x01(\tR\x05value\"\x95\x01\n" +
+	"\x05value\x18\x05 \x01(\tR\x05value\x12\x1b\n" +
+	"\tconfig_op\x18\x06 \x01(\tR\bconfigOp\"\x95\x01\n" +
 	"\x12RequestVoteRequest\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12!\n" +
 	"\fcandidate_id\x18\x02 \x01(\tR\vcandidateId\x12$\n" +

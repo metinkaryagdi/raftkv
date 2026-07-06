@@ -51,7 +51,6 @@ func (n *Node) HandleRequestVote(args *RequestVoteArgs) *RequestVoteReply {
 // or reconciles entries, and advances the follower's commit index.
 func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply {
 	n.mu.Lock()
-	defer n.mu.Unlock()
 
 	reply := &AppendEntriesReply{}
 
@@ -59,6 +58,7 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 	if args.Term < n.currentTerm {
 		reply.Term = n.currentTerm
 		reply.Success = false
+		n.mu.Unlock()
 		return reply
 	}
 
@@ -87,6 +87,7 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 	// transiently right after an InstallSnapshot lands.
 	if args.PrevLogIndex < n.lastIncludedIndex {
 		reply.Success = true
+		n.mu.Unlock()
 		return reply
 	}
 
@@ -97,6 +98,7 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 		reply.Success = false
 		reply.ConflictIndex = lastIdx + 1 // tell the leader where our log ends
 		reply.ConflictTerm = 0
+		n.mu.Unlock()
 		return reply
 	}
 
@@ -113,6 +115,7 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 			ci--
 		}
 		reply.ConflictIndex = ci
+		n.mu.Unlock()
 		return reply
 	}
 
@@ -120,6 +123,7 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 	// disagrees on term (and everything after it) is truncated (§5.3). Entries we
 	// already have with a matching term are left untouched so that a delayed or
 	// duplicated RPC can never delete committed entries.
+	var pending []pendingPeerUpdate
 	for i := range args.Entries {
 		entry := args.Entries[i]
 		idx := args.PrevLogIndex + 1 + uint64(i)
@@ -133,11 +137,11 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 				// replacement entry.
 				n.recomputeConfigFromLogLocked()
 				n.log = append(n.log, entry)
-				n.applyConfigChangeLocked(idx, entry.Command)
+				pending = append(pending, n.applyConfigChangeLocked(idx, entry.Command))
 			}
 		} else {
 			n.log = append(n.log, entry)
-			n.applyConfigChangeLocked(idx, entry.Command)
+			pending = append(pending, n.applyConfigChangeLocked(idx, entry.Command))
 		}
 	}
 
@@ -149,6 +153,15 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 	}
 
 	reply.Success = true
+	transport := n.transport
+	n.mu.Unlock()
+
+	// Transport bookkeeping (which may eagerly dial) happens only after
+	// unlocking, per the package's rule that RPCs are never issued while
+	// holding mu.
+	for _, p := range pending {
+		p.apply(transport)
+	}
 	return reply
 }
 

@@ -9,10 +9,12 @@ import (
 
 // HTTPHandler returns the client-facing REST API for this node:
 //
-//	GET    /kv/{key}   -> read a value (leader only)
-//	PUT    /kv/{key}   -> set a value (body is the raw value)
-//	DELETE /kv/{key}   -> delete a key
-//	GET    /status     -> node role/term/leader/commit
+//	GET    /kv/{key}              -> read a value (leader only)
+//	PUT    /kv/{key}              -> set a value (body is the raw value)
+//	DELETE /kv/{key}              -> delete a key
+//	GET    /status                -> node role/term/leader/commit
+//	POST   /cluster/add-server    -> propose adding a node ({"id","raftAddr"})
+//	POST   /cluster/remove-server -> propose removing a node ({"id"})
 //
 // Non-leader nodes reject writes and reads with 421 and a JSON body naming the
 // current leader so the client can redirect.
@@ -23,6 +25,8 @@ func (s *Server) HTTPHandler() http.Handler {
 	mux.HandleFunc("POST /kv/{key}", s.handleSet)
 	mux.HandleFunc("DELETE /kv/{key}", s.handleDelete)
 	mux.HandleFunc("GET /status", s.handleStatus)
+	mux.HandleFunc("POST /cluster/add-server", s.handleAddServer)
+	mux.HandleFunc("POST /cluster/remove-server", s.handleRemoveServer)
 	return mux
 }
 
@@ -62,13 +66,57 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	st := s.node.Status()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id":          st.ID,
-		"role":        st.Role.String(),
-		"term":        st.Term,
-		"leader":      st.LeaderID,
-		"commitIndex": st.CommitIndex,
-		"logLength":   st.LogLength,
+		"id":                st.ID,
+		"role":              st.Role.String(),
+		"term":              st.Term,
+		"leader":            st.LeaderID,
+		"commitIndex":       st.CommitIndex,
+		"logLength":         st.LogLength,
+		"lastIncludedIndex": st.LastIncludedIndex,
 	})
+}
+
+type addServerRequest struct {
+	ID       string `json:"id"`
+	RaftAddr string `json:"raftAddr"`
+}
+
+func (s *Server) handleAddServer(w http.ResponseWriter, r *http.Request) {
+	var req addServerRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ID == "" || req.RaftAddr == "" {
+		http.Error(w, "id and raftAddr are required", http.StatusBadRequest)
+		return
+	}
+	if err := s.AddServer(req.ID, req.RaftAddr); err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "id": req.ID})
+}
+
+type removeServerRequest struct {
+	ID string `json:"id"`
+}
+
+func (s *Server) handleRemoveServer(w http.ResponseWriter, r *http.Request) {
+	var req removeServerRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	if err := s.RemoveServer(req.ID); err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "id": req.ID})
 }
 
 // writeErr maps server errors to HTTP responses. A not-leader error carries the
@@ -80,7 +128,7 @@ func (s *Server) writeErr(w http.ResponseWriter, err error) {
 			"error":  "not leader",
 			"leader": s.LeaderHint(),
 		})
-	case errors.Is(err, ErrLostLeadership):
+	case errors.Is(err, ErrLostLeadership), errors.Is(err, ErrConfigChangeInFlight):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 	case errors.Is(err, ErrTimeout):
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})

@@ -115,12 +115,39 @@ type Transport struct {
 	conns map[string]*grpc.ClientConn
 }
 
-// NewTransport creates a transport for the node self, given a peer id->address map.
+// NewTransport creates a transport for the node self, given a peer id->address
+// map. The map is copied defensively: peers is now mutable at runtime via
+// AddPeer/RemovePeer (for dynamic membership changes), so the caller's own copy
+// must not alias it.
 func NewTransport(self string, peers map[string]string) *Transport {
+	owned := make(map[string]string, len(peers))
+	for id, addr := range peers {
+		owned[id] = addr
+	}
 	return &Transport{
 		self:  self,
-		peers: peers,
+		peers: owned,
 		conns: make(map[string]*grpc.ClientConn),
+	}
+}
+
+// AddPeer registers (or updates) a peer's address, so future RPCs to it dial
+// this address. Implements raft.PeerManager.
+func (t *Transport) AddPeer(id, addr string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.peers[id] = addr
+}
+
+// RemovePeer forgets a peer's address and closes any open connection to it.
+// Implements raft.PeerManager.
+func (t *Transport) RemovePeer(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.peers, id)
+	if conn, ok := t.conns[id]; ok {
+		_ = conn.Close()
+		delete(t.conns, id)
 	}
 }
 
@@ -147,7 +174,14 @@ func (t *Transport) client(target string) (raftpb.RaftClient, error) {
 // latency. Connections are non-blocking and retry in the background, so it is
 // safe to call before peers are listening.
 func (t *Transport) Warmup() {
+	t.mu.Lock()
+	ids := make([]string, 0, len(t.peers))
 	for id := range t.peers {
+		ids = append(ids, id)
+	}
+	t.mu.Unlock()
+
+	for _, id := range ids {
 		_, _ = t.client(id) // populates t.conns
 	}
 	t.mu.Lock()
@@ -241,11 +275,12 @@ func toPBEntries(in []raft.LogEntry) []*raftpb.LogEntry {
 	out := make([]*raftpb.LogEntry, len(in))
 	for i, e := range in {
 		out[i] = &raftpb.LogEntry{
-			Term:  e.Term,
-			Index: e.Index,
-			Op:    e.Command.Op,
-			Key:   e.Command.Key,
-			Value: e.Command.Value,
+			Term:     e.Term,
+			Index:    e.Index,
+			Op:       e.Command.Op,
+			Key:      e.Command.Key,
+			Value:    e.Command.Value,
+			ConfigOp: e.Command.ConfigOp,
 		}
 	}
 	return out
@@ -260,7 +295,7 @@ func fromPBEntries(in []*raftpb.LogEntry) []raft.LogEntry {
 		out[i] = raft.LogEntry{
 			Term:    e.Term,
 			Index:   e.Index,
-			Command: raft.Command{Op: e.Op, Key: e.Key, Value: e.Value},
+			Command: raft.Command{Op: e.Op, Key: e.Key, Value: e.Value, ConfigOp: e.ConfigOp},
 		}
 	}
 	return out

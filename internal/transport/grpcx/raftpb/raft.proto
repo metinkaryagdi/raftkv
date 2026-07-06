@@ -18,6 +18,10 @@ message LogEntry {
   string op = 3;
   string key = 4;
   string value = 5;
+  // config_op is "add" or "remove", set only when op == "conf_change". A
+  // dedicated field rather than overloading key/value avoids colliding with
+  // their existing meaning ("target key" / "value to set").
+  string config_op = 6;
 }
 
 message RequestVoteRequest {
