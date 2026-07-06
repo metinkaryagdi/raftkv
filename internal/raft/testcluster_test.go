@@ -218,6 +218,49 @@ func (c *testCluster) logsConverged(ids []string, wantCommit uint64) bool {
 	return true
 }
 
+// addJoiningNode constructs and registers a new node on the same in-memory
+// network as the rest of the cluster, configured with no known peers and
+// Config.Joining set — it will not start an election on its own and must be
+// added to the cluster's configuration via a conf_change (ProposeConfigChange)
+// before it can participate. It is appended to c.ids and its applied commands
+// are collected exactly like any other node's.
+func (c *testCluster) addJoiningNode(id string) *raft.Node {
+	c.t.Helper()
+	node := raft.NewNode(raft.Config{
+		ID:                 id,
+		Peers:              nil,
+		Joining:            true,
+		Transport:          c.net.Endpoint(id),
+		ElectionTimeoutMin: 80 * time.Millisecond,
+		ElectionTimeoutMax: 160 * time.Millisecond,
+		HeartbeatInterval:  20 * time.Millisecond,
+	})
+	c.net.Register(id, node)
+	c.nodes[id] = node
+	c.ids = append(c.ids, id)
+	node.Start()
+	c.collect(id)
+	return node
+}
+
+// proposeConfigChangeToLeader submits cmd via whichever node in ids is
+// currently leader, retrying across leadership changes until accepted (not
+// merely committed) or the deadline passes.
+func (c *testCluster) proposeConfigChangeToLeader(within time.Duration, ids []string, cmd raft.Command) (uint64, uint64) {
+	c.t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		for _, id := range ids {
+			if idx, term, err := c.nodes[id].ProposeConfigChange(cmd); err == nil {
+				return idx, term
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	c.t.Fatalf("could not propose config change %+v via any leader in %v within %v", cmd, ids, within)
+	return 0, 0
+}
+
 func (c *testCluster) dump(ids []string) string {
 	s := ""
 	for _, id := range ids {

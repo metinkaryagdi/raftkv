@@ -26,6 +26,16 @@ type Config struct {
 	// Logger, if non-nil, receives structured state-transition events. Optional.
 	Logger Logger
 
+	// Joining marks a node that is starting with no known peers because it is
+	// about to be added to an existing cluster via a dynamic membership change
+	// (see ProposeConfigChange), rather than being a genesis member of a
+	// brand-new cluster. A joining node never starts an election or grants a
+	// vote on its own — with Peers empty, quorum() would trivially be 1, and it
+	// would otherwise win its own election and become a rogue single-node
+	// "leader" that never learns the real cluster. It stops joining and behaves
+	// normally the first time a real leader successfully sends it AppendEntries.
+	Joining bool
+
 	// tickInterval controls how often the internal loop checks its timers. Zero
 	// selects a sensible default. Exposed only for tests that need fast ticks.
 	tickInterval time.Duration
@@ -71,6 +81,16 @@ type Node struct {
 	// --- Volatile state on leaders (reinitialized after election). ---
 	nextIndex  map[string]uint64 // for each peer, next log index to send
 	matchIndex map[string]uint64 // for each peer, highest replicated index
+
+	// baseConfig is the cluster's original bootstrap peer set (Config.Peers at
+	// construction), never mutated afterward. It is the fallback membership when
+	// reverting after a truncated, never-committed configuration change (see
+	// recomputeConfigFromLogLocked in membership.go).
+	baseConfig []string
+
+	// joining suppresses election-starting and vote-granting until this node has
+	// been contacted by a real leader (see Config.Joining).
+	joining bool
 
 	// --- Election / heartbeat timers. ---
 	lastHeard       time.Time     // last time we heard from a valid leader or granted a vote
@@ -118,6 +138,7 @@ func NewNode(cfg Config) *Node {
 	n := &Node{
 		id:                 cfg.ID,
 		peers:              append([]string(nil), cfg.Peers...),
+		baseConfig:         append([]string(nil), cfg.Peers...),
 		transport:          cfg.Transport,
 		logger:             logger,
 		electionTimeoutMin: cfg.ElectionTimeoutMin,
@@ -125,6 +146,7 @@ func NewNode(cfg Config) *Node {
 		heartbeatInterval:  cfg.HeartbeatInterval,
 		tickInterval:       tick,
 		role:               Follower,
+		joining:            cfg.Joining,
 		// A single sentinel entry at index 0 removes the special-casing of an
 		// empty log: the "previous" entry always exists.
 		log:         []LogEntry{{Term: 0, Index: 0}},
@@ -201,6 +223,13 @@ func (n *Node) tick() {
 			return
 		}
 	case Follower, Candidate:
+		// A joining node (empty peer set, about to be added via a dynamic
+		// membership change) must never start an election: quorum() would
+		// trivially be 1, so it would win instantly and become a rogue
+		// single-node "leader" that never learns the real cluster.
+		if n.joining {
+			break
+		}
 		if time.Since(n.lastHeard) >= n.electionTimeout {
 			n.mu.Unlock()
 			n.startElection()

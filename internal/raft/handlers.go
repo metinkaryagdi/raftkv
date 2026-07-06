@@ -21,6 +21,15 @@ func (n *Node) HandleRequestVote(args *RequestVoteArgs) *RequestVoteReply {
 		n.becomeFollowerLocked(args.Term)
 	}
 
+	// A joining node (see Config.Joining) has no real log of its own yet and no
+	// peers to be a spoiler among; granting a vote before it has caught up could
+	// only cause confusion in bizarre restart-during-join edge cases, so it
+	// refuses outright rather than reasoning about log up-to-dateness at all.
+	if n.joining {
+		reply.Term = n.currentTerm
+		return reply
+	}
+
 	// Grant the vote if we have not voted for anyone else this term and the
 	// candidate's log is at least as up-to-date as ours.
 	canVote := n.votedFor == "" || n.votedFor == args.CandidateID
@@ -64,6 +73,11 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 	n.leaderID = args.LeaderID
 	n.resetElectionTimerLocked()
 	reply.Term = n.currentTerm
+
+	// A real leader successfully talking to us — one that already knows our id
+	// well enough to address an RPC to it — is proof we've been admitted to the
+	// cluster (see Config.Joining): it's safe to start participating normally.
+	n.joining = false
 
 	// The leader is (redundantly, or just after we installed a snapshot) sending
 	// entries anchored before what we've already compacted past. Everything up to
@@ -113,10 +127,17 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 		if offset < len(n.log) {
 			if n.log[offset].Term != entry.Term {
 				n.log = n.log[:offset]
+				// The truncated-away suffix might have contained an uncommitted
+				// conf_change we'd already applied at append time (§6); rebuild
+				// n.peers from the safe committed prefix before appending the
+				// replacement entry.
+				n.recomputeConfigFromLogLocked()
 				n.log = append(n.log, entry)
+				n.applyConfigChangeLocked(idx, entry.Command)
 			}
 		} else {
 			n.log = append(n.log, entry)
+			n.applyConfigChangeLocked(idx, entry.Command)
 		}
 	}
 
