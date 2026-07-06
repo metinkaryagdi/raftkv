@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/metinkaryagdi/raftkv/internal/logfmt"
 	"github.com/metinkaryagdi/raftkv/internal/raft"
 	"github.com/metinkaryagdi/raftkv/internal/server"
 	"github.com/metinkaryagdi/raftkv/internal/transport/grpcx"
@@ -247,30 +248,12 @@ type errBadPeer string
 
 func (e errBadPeer) Error() string { return "expected id=host:port, got " + string(e) }
 
-// stderrLogger prints Raft state transitions, one line each, to stderr.
+// stderrLogger prints Raft state transitions, one line each, to stderr, in the
+// exact format internal/logfmt.Parse expects (the lab tails and parses this
+// output — see that package's doc comment for why the format lives there and
+// not here).
 type stderrLogger struct{}
 
 func (stderrLogger) Event(nodeID string, e raft.Event) {
-	line := "[" + nodeID + "] " + e.Kind + " term=" + itoa(e.Term) + " role=" + e.Role.String()
-	if e.Peer != "" {
-		line += " peer=" + e.Peer
-	}
-	if e.Info != "" {
-		line += " (" + e.Info + ")"
-	}
-	log.New(os.Stderr, "", log.LstdFlags|log.Lmicroseconds).Println(line)
-}
-
-func itoa(u uint64) string {
-	if u == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for u > 0 {
-		i--
-		b[i] = byte('0' + u%10)
-		u /= 10
-	}
-	return string(b[i:])
+	log.New(os.Stderr, "", log.LstdFlags|log.Lmicroseconds).Println(logfmt.Format(nodeID, e))
 }

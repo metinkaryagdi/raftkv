@@ -13,6 +13,7 @@ import (
 //	PUT    /kv/{key}              -> set a value (body is the raw value)
 //	DELETE /kv/{key}              -> delete a key
 //	GET    /status                -> node role/term/leader/commit
+//	GET    /debug/log             -> full retained log + LastIncludedIndex (for the lab's log-matrix view)
 //	POST   /cluster/add-server    -> propose adding a node ({"id","raftAddr"})
 //	POST   /cluster/remove-server -> propose removing a node ({"id"})
 //
@@ -25,6 +26,7 @@ func (s *Server) HTTPHandler() http.Handler {
 	mux.HandleFunc("POST /kv/{key}", s.handleSet)
 	mux.HandleFunc("DELETE /kv/{key}", s.handleDelete)
 	mux.HandleFunc("GET /status", s.handleStatus)
+	mux.HandleFunc("GET /debug/log", s.handleDebugLog)
 	mux.HandleFunc("POST /cluster/add-server", s.handleAddServer)
 	mux.HandleFunc("POST /cluster/remove-server", s.handleRemoveServer)
 	return mux
@@ -73,6 +75,19 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		"commitIndex":       st.CommitIndex,
 		"logLength":         st.LogLength,
 		"lastIncludedIndex": st.LastIncludedIndex,
+	})
+}
+
+// handleDebugLog exposes the node's retained log entries plus
+// LastIncludedIndex, needed together to correctly interpret log positions
+// post-compaction: an index at or below LastIncludedIndex was compacted away
+// (not "never existed" — a distinction the lab's log-matrix view must render
+// differently), and LogCopy() alone can't tell those two cases apart.
+func (s *Server) handleDebugLog(w http.ResponseWriter, _ *http.Request) {
+	st := s.node.Status()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"lastIncludedIndex": st.LastIncludedIndex,
+		"entries":           s.node.LogCopy(),
 	})
 }
 
