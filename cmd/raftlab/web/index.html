@@ -3,19 +3,58 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>raftkv lab</title>
+  <title>raftkv lab dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <header>
-    <h1>raftkv <span class="accent">lab</span></h1>
-    <div id="connection-status" class="pill pill-muted">connecting…</div>
+    <div class="header-brand">
+      <div class="logo-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+      </div>
+      <h1>raftkv <span class="accent">lab</span></h1>
+    </div>
+
+    <!-- Cluster Overview Stats Header Bar -->
+    <div class="cluster-stats-bar">
+      <div class="stat-pill">
+        <span class="stat-label">Nodes</span>
+        <span id="stat-nodes-count" class="stat-value">0</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-label">Leader</span>
+        <span id="stat-leader" class="stat-value text-leader">None</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-label">Current Term</span>
+        <span id="stat-term" class="stat-value">0</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-label">Log Index</span>
+        <span id="stat-log-index" class="stat-value">0</span>
+      </div>
+      <div id="connection-status" class="pill pill-muted">
+        <span class="status-dot"></span>
+        <span class="status-text">connecting…</span>
+      </div>
+    </div>
   </header>
 
   <main>
+    <!-- Top Row: Topology & Node Controls -->
     <section class="panel" id="topology-panel">
-      <h2>Cluster topology</h2>
-      <svg id="topology" viewBox="0 0 600 360" role="img" aria-label="Raft cluster topology"></svg>
+      <div class="panel-header">
+        <h2>Cluster Topology</h2>
+        <span class="panel-subtitle">Real-time Peer Graph &amp; Roles</span>
+      </div>
+      <div class="topology-container">
+        <svg id="topology" viewBox="0 0 600 360" role="img" aria-label="Raft cluster topology"></svg>
+      </div>
       <div class="legend">
         <span><i class="dot leader"></i> Leader</span>
         <span><i class="dot candidate"></i> Candidate</span>
@@ -25,35 +64,88 @@
     </section>
 
     <section class="panel" id="controls-panel">
-      <h2>Controls</h2>
-      <div id="node-controls"></div>
-      <form id="membership-form">
-        <h3>Membership</h3>
+      <div class="panel-header">
+        <h2>Node Fault Controls</h2>
+        <span class="panel-subtitle">Inject Crashes &amp; Partitions</span>
+      </div>
+      <div id="node-controls" class="controls-list"></div>
+
+      <!-- Membership Form -->
+      <form id="membership-form" class="membership-card">
+        <h3>Dynamic Cluster Membership (§6)</h3>
         <div class="form-row">
-          <input id="member-id" placeholder="node id (e.g. n6)" required>
-          <input id="member-addr" placeholder="raft addr (add only, e.g. raftkv-n6:9001)">
+          <input id="member-id" placeholder="Node ID (e.g. n6)" required autocomplete="off">
+          <input id="member-addr" placeholder="Raft Addr (e.g. raftkv-n6:9001)" autocomplete="off">
         </div>
-        <div class="form-row">
-          <button type="submit" data-action="add">Add server</button>
-          <button type="submit" data-action="remove">Remove server</button>
+        <div class="form-row btn-group">
+          <button type="submit" id="btn-add-server" class="btn btn-primary" data-action="add">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            Add Server
+          </button>
+          <button type="submit" id="btn-remove-server" class="btn btn-danger-outline" data-action="remove">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            Remove Server
+          </button>
         </div>
         <div id="membership-result" class="hint"></div>
       </form>
     </section>
 
+    <!-- KV Store Playground Panel -->
+    <section class="panel" id="kv-playground-panel">
+      <div class="panel-header">
+        <h2>KV Store Playground</h2>
+        <span class="panel-subtitle">Write &amp; Read Replicated Data</span>
+      </div>
+      <form id="kv-form" class="kv-form">
+        <div class="form-row">
+          <input id="kv-key" placeholder="Key (e.g. city)" required autocomplete="off">
+          <input id="kv-val" placeholder="Value (e.g. istanbul)" autocomplete="off">
+        </div>
+        <div class="form-row btn-group">
+          <button type="button" id="btn-kv-set" class="btn btn-accent">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            PUT (Set)
+          </button>
+          <button type="button" id="btn-kv-get" class="btn btn-secondary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            GET (Read)
+          </button>
+          <button type="button" id="btn-kv-del" class="btn btn-danger-outline">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            DELETE
+          </button>
+        </div>
+        <div id="kv-output" class="code-output">Ready for commands...</div>
+      </form>
+    </section>
+
+    <!-- Middle Row: Log Matrix -->
     <section class="panel" id="log-panel">
-      <h2>Log matrix</h2>
-      <div class="log-legend">
-        <span><i class="cell committed"></i> committed</span>
-        <span><i class="cell uncommitted"></i> uncommitted</span>
-        <span><i class="cell compacted"></i> compacted</span>
-        <span><i class="cell absent"></i> absent</span>
+      <div class="panel-header">
+        <h2>Replicated Log Matrix</h2>
+        <div class="log-legend">
+          <span><i class="cell committed"></i> Committed</span>
+          <span><i class="cell uncommitted"></i> Uncommitted</span>
+          <span><i class="cell compacted"></i> Compacted</span>
+          <span><i class="cell absent"></i> Absent</span>
+        </div>
       </div>
       <div id="log-matrix" class="matrix-scroll"></div>
     </section>
 
+    <!-- Bottom Row: Live Event Feed -->
     <section class="panel" id="events-panel">
-      <h2>Live events</h2>
+      <div class="panel-header">
+        <h2>Live Event Feed</h2>
+        <div class="feed-filters">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="leader">Leader</button>
+          <button class="filter-btn" data-filter="election">Election</button>
+          <button class="filter-btn" data-filter="commit">Commit</button>
+          <button class="btn-clear-feed" id="btn-clear-feed" title="Clear event feed">Clear</button>
+        </div>
+      </div>
       <div id="event-feed"></div>
     </section>
   </main>

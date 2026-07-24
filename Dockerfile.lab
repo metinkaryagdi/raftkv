@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1
+
+# --- build stage: compile a static Linux binary (frontend is baked in via
+# cmd/raftlab's //go:embed web, so there's no separate npm/asset build step) ---
+FROM golang:1.26 AS build
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/raftlab ./cmd/raftlab
+
+# --- runtime stage: needs the docker CLI + compose plugin, not just curl —
+# the lab shells out to `docker`/`docker compose`/scripts/*.sh against its
+# sibling containers over the mounted host socket ("Docker-outside-of-Docker").
+FROM docker:27-cli
+RUN apk add --no-cache bash curl docker-cli-compose
+WORKDIR /workspace
+
+COPY --from=build /out/raftlab /usr/local/bin/raftlab
+# The lab's orchestrator (internal/orchestrator/compose) runs `docker compose
+# ps/port` and `bash scripts/compose-*-node.sh` with this directory as its
+# cwd, so it needs its own copies of the compose file and scripts — same
+# `name: raftkv` pin as the host's copy keeps the Compose project consistent
+# no matter which of the two calls `docker compose`.
+COPY docker-compose.yml ./
+COPY scripts/ ./scripts/
+
+EXPOSE 7070
+ENTRYPOINT ["raftlab"]

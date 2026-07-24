@@ -262,6 +262,12 @@ docker compose down                # tear everything down
 > shared-key, build once with the legacy builder and then start without building:
 > `DOCKER_BUILDKIT=0 docker build -t raftkv:latest . && docker compose up -d`.
 
+The compose file also defines a `lab` service — the dashboard from
+["The lab"](#the-lab-observing-and-controlling-a-real-cluster) below,
+containerized, so `docker compose up --build` brings up the 5-node cluster
+*and* its control panel on <http://127.0.0.1:7070> in one shot. No extra
+flags needed.
+
 ### Or run it on Kubernetes
 
 [`deploy/k8s/raftkv.yaml`](deploy/k8s/raftkv.yaml) runs the cluster as a
@@ -353,6 +359,27 @@ matrix (committed / uncommitted / compacted / absent), and its buttons call
 through to `docker kill`/`docker network disconnect`/`kubectl delete pod`/a
 scoped `NetworkPolicy`/the add-node and remove-node scripts above — so killing a
 node in the browser kills a real container or pod.
+
+```bash
+docker compose up -d              # brings up n1..n5 AND the containerized lab
+# open http://127.0.0.1:7070
+```
+
+The `lab` service in `docker-compose.yml` builds from [`Dockerfile.lab`](Dockerfile.lab)
+and runs the exact same binary as the local option below — it just needs the
+host's Docker socket mounted in (`docker-outside-of-docker`) so it can shell
+out `docker kill`/`docker network disconnect`/the add/remove-node scripts
+against its sibling containers, and its own baked-in copy of
+`docker-compose.yml`/`scripts/` to do so (see the comments in `Dockerfile.lab`
+and the `name: raftkv` pin at the top of `docker-compose.yml`, which keeps
+the Compose project identical whether `docker compose ps` is invoked from the
+host or from inside the lab container). Mounting the Docker socket gives the
+lab container the same control over the host's Docker daemon as a user in
+the `docker` group — fine for this single-user local lab, not something to
+expose beyond your own machine.
+
+Prefer running the lab as a local process instead (e.g. against `k8s`, or to
+iterate on the frontend without a rebuild each time)?
 
 ```bash
 docker compose up -d              # (or: apply the k8s manifests + kind cluster)

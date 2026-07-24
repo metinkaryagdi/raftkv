@@ -68,6 +68,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/orchestrator/remove/{id}", s.action(s.orch.RemoveNode))
 	mux.HandleFunc("POST /api/cluster/add-server", s.handleClusterAddServer)
 	mux.HandleFunc("POST /api/cluster/remove-server", s.handleClusterRemoveServer)
+	mux.HandleFunc("GET /api/kv/{key}", s.handleKVGet)
+	mux.HandleFunc("PUT /api/kv/{key}", s.handleKVPut)
+	mux.HandleFunc("DELETE /api/kv/{key}", s.handleKVDelete)
 	mux.HandleFunc("GET /ws/events", s.handleWS)
 	return mux
 }
@@ -250,3 +253,66 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
+
+func (s *Server) handleKVGet(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	addr, err := s.findLeaderAddr()
+	if err != nil {
+		nodes, lErr := s.orch.ListNodes()
+		if lErr == nil {
+			for _, n := range nodes {
+				if n.Ready && n.Addr != "" {
+					addr = n.Addr
+					break
+				}
+			}
+		}
+	}
+	if addr == "" {
+		http.Error(w, "no reachable cluster node found", http.StatusServiceUnavailable)
+		return
+	}
+	s.proxyGetDirect(w, "http://"+addr+"/kv/"+key)
+}
+
+func (s *Server) handleKVPut(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	addr, err := s.findLeaderAddr()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	s.proxyPost(w, r, addr, "/kv/"+key)
+}
+
+func (s *Server) handleKVDelete(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	addr, err := s.findLeaderAddr()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodDelete, "http://"+addr+"/kv/"+key, nil)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func (s *Server) proxyGetDirect(w http.ResponseWriter, urlStr string) {
+	resp, err := s.httpClient.Get(urlStr)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+

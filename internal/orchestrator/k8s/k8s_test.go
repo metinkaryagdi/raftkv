@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -13,10 +14,17 @@ type spyExec struct {
 	calls [][]string
 }
 
+func dummyCmd() *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.Command("cmd", "/c", "exit 0")
+	}
+	return exec.Command("true")
+}
+
 func (s *spyExec) fn() func(name string, args ...string) *exec.Cmd {
 	return func(name string, args ...string) *exec.Cmd {
 		s.calls = append(s.calls, append([]string{name}, args...))
-		return exec.Command("true")
+		return dummyCmd()
 	}
 }
 

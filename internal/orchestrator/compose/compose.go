@@ -6,7 +6,9 @@ package compose
 import (
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -139,7 +141,11 @@ func (o *Orchestrator) ListNodes() ([]orchestrator.NodeRef, error) {
 			refs = append(refs, orchestrator.NodeRef{ID: id, Ready: false})
 			continue
 		}
-		refs = append(refs, orchestrator.NodeRef{ID: id, Addr: "127.0.0.1:" + port, Ready: true})
+		targetAddr := "127.0.0.1:" + port
+		if isDockerContainer() {
+			targetAddr = id + ":8001"
+		}
+		refs = append(refs, orchestrator.NodeRef{ID: id, Addr: targetAddr, Ready: true})
 	}
 	// Filter dynamically-added nodes by NETWORK membership, not just a
 	// "raftkv-*" name match: a name-only filter can accidentally pick up
@@ -153,7 +159,10 @@ func (o *Orchestrator) ListNodes() ([]orchestrator.NodeRef, error) {
 			"--format", "{{.Names}}")
 		if err == nil {
 			for _, name := range strings.Fields(string(out)) {
-				id := strings.TrimPrefix(name, "raftkv-")
+				id, ok := dynamicNodeID(name)
+				if !ok {
+					continue
+				}
 				// Dynamically-added nodes have no published host port in this demo
 				// (see scripts/compose-add-node.sh); the lab reaches them only
 				// indirectly, through the genesis nodes' view of the cluster.
@@ -162,6 +171,27 @@ func (o *Orchestrator) ListNodes() ([]orchestrator.NodeRef, error) {
 		}
 	}
 	return refs, nil
+}
+
+// dynamicNodeID reports whether a container name belongs to a node added via
+// scripts/compose-add-node.sh's "docker run --name raftkv-<id>" convention
+// (no replica suffix), as opposed to a Compose-managed container — a genesis
+// node (n1..n5) or the lab service itself — which Compose names
+// "raftkv-<service>-<replica>" (a trailing numeric replica index). Pinning
+// the Compose project name to "raftkv" (see docker-compose.yml's `name:`)
+// makes genesis/lab containers ALSO start with "raftkv-", so the prefix alone
+// no longer distinguishes them; the trailing "-<digits>" does.
+func dynamicNodeID(name string) (string, bool) {
+	id := strings.TrimPrefix(name, "raftkv-")
+	if id == name {
+		return "", false
+	}
+	if i := strings.LastIndex(id, "-"); i >= 0 {
+		if _, err := strconv.Atoi(id[i+1:]); err == nil {
+			return "", false
+		}
+	}
+	return id, true
 }
 
 func (o *Orchestrator) KillNode(id string) error {
@@ -243,3 +273,9 @@ func (o *Orchestrator) Logs(id string) (io.ReadCloser, error) {
 	}()
 	return &procReadCloser{ReadCloser: pr, cmd: c}, nil
 }
+
+func isDockerContainer() bool {
+	_, err := os.Stat("/.dockerenv")
+	return err == nil
+}
+

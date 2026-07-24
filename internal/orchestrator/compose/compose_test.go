@@ -2,9 +2,24 @@ package compose
 
 import (
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func dummyCmd() *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.Command("cmd", "/c", "exit 0")
+	}
+	return exec.Command("true")
+}
+
+func echoCmd(arg string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.Command("cmd", "/c", "echo "+arg)
+	}
+	return exec.Command("echo", arg)
+}
 
 // spyExec records every command the orchestrator tries to run and substitutes
 // a harmless real command in its place — this tests command *construction*
@@ -23,7 +38,7 @@ func (s *spyExec) fn() func(name string, args ...string) *exec.Cmd {
 		if s.real != nil {
 			return s.real(name, args...)
 		}
-		return exec.Command("true")
+		return dummyCmd()
 	}
 }
 
@@ -46,17 +61,17 @@ func canned() func(name string, args ...string) *exec.Cmd {
 		if name == "docker" && len(args) >= 2 && args[0] == "compose" && args[1] == "ps" {
 			for _, a := range args {
 				if a == "-q" {
-					return exec.Command("echo", "fake-container-id")
+					return echoCmd("fake-container-id")
 				}
 			}
 			if len(args) >= 3 {
-				return exec.Command("echo", "resolved-"+args[2])
+				return echoCmd("resolved-" + args[2])
 			}
 		}
 		if name == "docker" && len(args) >= 1 && args[0] == "inspect" {
-			return exec.Command("echo", "fake_network")
+			return echoCmd("fake_network")
 		}
-		return exec.Command("true")
+		return dummyCmd()
 	}
 }
 
@@ -110,6 +125,33 @@ func TestRemoveNodeInvokesTheRemoveNodeScript(t *testing.T) {
 	}
 	if got := spy.last(); got != "bash scripts/compose-remove-node.sh n6" {
 		t.Fatalf("command = %q, want %q", got, "bash scripts/compose-remove-node.sh n6")
+	}
+}
+
+func TestDynamicNodeIDExcludesComposeManagedContainers(t *testing.T) {
+	// Pinning the Compose project name to "raftkv" (docker-compose.yml's
+	// `name:`) means genesis containers AND the lab service itself also start
+	// with "raftkv-" (e.g. "raftkv-n1-1", "raftkv-lab-1") — the same prefix
+	// scripts/compose-add-node.sh uses for genuinely dynamic nodes
+	// ("raftkv-n6", no replica suffix). Found live: after adding `name:
+	// raftkv`, ListNodes() started reporting the genesis nodes and the lab
+	// container itself as "dynamically added" nodes named "n1-1".."lab-1".
+	cases := []struct {
+		name    string
+		wantID  string
+		wantDyn bool
+	}{
+		{"raftkv-n6", "n6", true},
+		{"raftkv-n1-1", "", false},
+		{"raftkv-lab-1", "", false},
+		{"raftkv-n42-3", "", false},
+		{"unrelated-container", "", false},
+	}
+	for _, c := range cases {
+		id, ok := dynamicNodeID(c.name)
+		if ok != c.wantDyn || id != c.wantID {
+			t.Errorf("dynamicNodeID(%q) = (%q, %v), want (%q, %v)", c.name, id, ok, c.wantID, c.wantDyn)
+		}
 	}
 }
 

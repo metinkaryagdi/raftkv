@@ -8,6 +8,12 @@
 #   curl -X PUT http://127.0.0.1:8001/kv/city -d istanbul   # redirects to leader
 #
 # Kill a leader to watch failover:  docker compose kill n<leader>
+#
+# `name:` is pinned (not derived from the checkout folder name) so the `lab`
+# service below — which shells out to `docker compose ps/port` against its own
+# baked-in copy of this file — always resolves the SAME Compose project as
+# whatever directory you actually ran `docker compose up` from.
+name: raftkv
 
 x-node: &node
   build: .
@@ -41,6 +47,24 @@ services:
     <<: *node
     command: ["--id", "n5"]
     ports: ["8005:8001"]
+
+  # The lab dashboard, containerized. It controls the OTHER containers above
+  # (kill/isolate/heal/add/remove) via the Docker CLI, so it needs the host's
+  # Docker socket mounted in — the standard "Docker-outside-of-Docker" pattern
+  # (the same one Portainer/Watchtower use). This gives the container the
+  # same power over the host's Docker daemon as a user in the `docker` group;
+  # fine for this local, single-user lab, not something to expose publicly.
+  lab:
+    build:
+      context: .
+      dockerfile: Dockerfile.lab
+    image: raftlab:latest
+    command: ["--target=compose", "--dir=/workspace", "--listen=:7070", "--genesis-ids=n1,n2,n3,n4,n5"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports: ["7070:7070"]
+    networks: [raft]
+    depends_on: [n1, n2, n3, n4, n5]
 
 networks:
   raft:
